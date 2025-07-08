@@ -1,103 +1,191 @@
-import Image from "next/image";
+import Link from "next/link";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+            <div className="max-w-4xl mx-auto">
+                <div className="bg-white rounded-2xl shadow-xl p-8 md:p-12">
+                    {/* 헤더 */}
+                    <div className="text-center mb-12">
+                        <div className="flex justify-center items-center mb-6">
+                            <span className="text-6xl mr-4">🏢</span>
+                            <h1 className="text-4xl md:text-5xl font-bold text-gray-900">
+                                출근 관리 봇
+                            </h1>
+                        </div>
+                        <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+                            네이버웍스 채팅에서 간편하게 출근/퇴근을 관리하세요.
+                            다양한 인증 방법과 실시간 현황 조회를 지원합니다.
+                        </p>
+                    </div>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+                    {/* 기능 소개 */}
+                    <div className="grid md:grid-cols-3 gap-8 mb-12">
+                        <div className="text-center p-6 bg-green-50 rounded-xl">
+                            <div className="text-4xl mb-4">📍</div>
+                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                위치 인증
+                            </h3>
+                            <p className="text-gray-600">
+                                회사 위치에서 간편하게 출근 인증을 완료하세요
+                            </p>
+                        </div>
+
+                        <div className="text-center p-6 bg-purple-50 rounded-xl">
+                            <div className="text-4xl mb-4">📷</div>
+                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                사진 인증
+                            </h3>
+                            <p className="text-gray-600">
+                                출근 증명 사진을 업로드하여 인증을 완료하세요
+                            </p>
+                        </div>
+
+                        <div className="text-center p-6 bg-yellow-50 rounded-xl">
+                            <div className="text-4xl mb-4">✏️</div>
+                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                텍스트 인증
+                            </h3>
+                            <p className="text-gray-600">
+                                오늘의 업무 계획을 작성하며 출근을 인증하세요
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* 사용 방법 */}
+                    <div className="bg-gray-50 rounded-xl p-8 mb-12">
+                        <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">
+                            🎯 사용 방법
+                        </h2>
+                        <div className="grid md:grid-cols-2 gap-6">
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold text-gray-900">
+                                    📱 직원용 (네이버웍스 채팅)
+                                </h3>
+                                <div className="space-y-3">
+                                    <div className="flex items-start">
+                                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm mr-3 mt-0.5">
+                                            1
+                                        </span>
+                                        <p className="text-gray-700">
+                                            네이버웍스에서 출근 관리 봇과 채팅
+                                            시작
+                                        </p>
+                                    </div>
+                                    <div className="flex items-start">
+                                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm mr-3 mt-0.5">
+                                            2
+                                        </span>
+                                        <p className="text-gray-700">
+                                            <code className="bg-gray-200 px-2 py-1 rounded">
+                                                /출근
+                                            </code>{" "}
+                                            명령어 입력
+                                        </p>
+                                    </div>
+                                    <div className="flex items-start">
+                                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm mr-3 mt-0.5">
+                                            3
+                                        </span>
+                                        <p className="text-gray-700">
+                                            원하는 인증 방법 선택
+                                            (위치/사진/텍스트)
+                                        </p>
+                                    </div>
+                                    <div className="flex items-start">
+                                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm mr-3 mt-0.5">
+                                            4
+                                        </span>
+                                        <p className="text-gray-700">
+                                            출근 인증 완료! 📊 현황 조회도 가능
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold text-gray-900">
+                                    👔 관리자용 (웹 대시보드)
+                                </h3>
+                                <div className="space-y-3">
+                                    <div className="flex items-start">
+                                        <span className="bg-green-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm mr-3 mt-0.5">
+                                            1
+                                        </span>
+                                        <p className="text-gray-700">
+                                            관리자 대시보드 접속
+                                        </p>
+                                    </div>
+                                    <div className="flex items-start">
+                                        <span className="bg-green-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm mr-3 mt-0.5">
+                                            2
+                                        </span>
+                                        <p className="text-gray-700">
+                                            실시간 출근 현황 모니터링
+                                        </p>
+                                    </div>
+                                    <div className="flex items-start">
+                                        <span className="bg-green-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm mr-3 mt-0.5">
+                                            3
+                                        </span>
+                                        <p className="text-gray-700">
+                                            출근률, 지각률 등 통계 확인
+                                        </p>
+                                    </div>
+                                    <div className="flex items-start">
+                                        <span className="bg-green-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm mr-3 mt-0.5">
+                                            4
+                                        </span>
+                                        <p className="text-gray-700">
+                                            날짜별 출근 기록 조회
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 액션 버튼 */}
+                    <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                        <Link
+                            href="/admin"
+                            className="inline-flex items-center justify-center px-8 py-4 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors duration-200 shadow-lg"
+                        >
+                            <span className="mr-2">👔</span>
+                            관리자 대시보드
+                        </Link>
+
+                        <div className="inline-flex items-center justify-center px-8 py-4 bg-gray-100 text-gray-700 font-semibold rounded-xl border-2 border-dashed border-gray-300">
+                            <span className="mr-2">📱</span>
+                            네이버웍스에서 봇 사용
+                        </div>
+                    </div>
+
+                    {/* 설정 안내 */}
+                    <div className="mt-12 p-6 bg-blue-50 rounded-xl border border-blue-200">
+                        <h3 className="text-lg font-semibold text-blue-900 mb-3">
+                            🔧 설정이 필요하신가요?
+                        </h3>
+                        <div className="text-blue-800 space-y-2">
+                            <p>• 네이버웍스 Developer Console에서 봇 등록</p>
+                            <p>
+                                • Callback URL 설정:{" "}
+                                <code className="bg-blue-100 px-2 py-1 rounded text-sm">
+                                    https://your-domain.com/api/webhook
+                                </code>
+                            </p>
+                            <p>
+                                • 환경변수 설정 (
+                                <code className="bg-blue-100 px-2 py-1 rounded text-sm">
+                                    .env.local
+                                </code>
+                                )
+                            </p>
+                            <p>• 데이터베이스 마이그레이션 실행</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+    );
 }

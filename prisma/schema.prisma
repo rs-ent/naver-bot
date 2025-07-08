@@ -1,0 +1,73 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  accountId   String   @unique // 네이버웍스 accountId
+  name        String?
+  email       String?
+  department  String?
+  position    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 출근 기록과의 관계
+  attendances Attendance[]
+
+  @@map("users")
+}
+
+model Attendance {
+  id            String      @id @default(cuid())
+  userId        String
+  type          AttendanceType
+  timestamp     DateTime    @default(now())
+  method        AuthMethod  // 인증 방법
+  location      String?     // 위치 정보 (lat,lng)
+  photoUrl      String?     // 인증 사진 URL
+  notes         String?     // 텍스트 인증 메모
+  isLate        Boolean     @default(false)
+  workingHours  Float?      // 근무 시간 (hours)
+  
+  // 관계
+  user          User        @relation(fields: [userId], references: [id])
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("attendances")
+}
+
+model WorkSchedule {
+  id          String   @id @default(cuid())
+  dayOfWeek   Int      // 0=일요일, 1=월요일, ... 6=토요일
+  startTime   String   // "09:00"
+  endTime     String   // "18:00"
+  isWorkday   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("work_schedules")
+}
+
+enum AttendanceType {
+  CHECKIN   // 출근
+  CHECKOUT  // 퇴근
+  BREAK     // 휴식
+}
+
+enum AuthMethod {
+  LOCATION  // 위치 인증
+  PHOTO     // 사진 인증  
+  TEXT      // 텍스트 인증
+  MANUAL    // 수동 인증
+} 
