@@ -209,7 +209,7 @@ export async function POST(request: NextRequest) {
                                     actions: [
                                         {
                                             type: "message",
-                                            label: "✅ 사진 업로드 완료",
+                                            label: "✅ 사진 업로드 완료!",
                                             postback: "PHOTO_UPLOADED",
                                         },
                                         {
