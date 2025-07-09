@@ -98,6 +98,83 @@ function createJWT(serviceAccount: any): string {
     }
 }
 
+// 구글 시트 헤더 확인 및 추가
+async function ensureHeaderExists(
+    sheetId: string,
+    sheetName: string,
+    accessToken: string
+) {
+    try {
+        console.log(`헤더 확인: ${sheetName} 시트`);
+
+        // 첫 번째 행 데이터 조회
+        const checkResponse = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+                sheetName
+            )}!A1:H1`,
+            {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                },
+            }
+        );
+
+        if (checkResponse.ok) {
+            const data = await checkResponse.json();
+
+            // 첫 번째 행에 데이터가 없거나 헤더가 아닌 경우
+            if (
+                !data.values ||
+                data.values.length === 0 ||
+                !data.values[0] ||
+                data.values[0][0] !== "타임스탬프"
+            ) {
+                console.log("헤더가 없습니다. 헤더를 추가합니다.");
+
+                // 헤더 추가
+                const headerResponse = await fetch(
+                    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+                        sheetName
+                    )}!A1:H1?valueInputOption=RAW`,
+                    {
+                        method: "PUT",
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                            values: [
+                                [
+                                    "타임스탬프", // A열
+                                    "한국시간", // B열
+                                    "이름", // C열
+                                    "이메일", // D열
+                                    "부서", // E열
+                                    "액션", // F열
+                                    "도메인ID", // G열
+                                    "출처", // H열
+                                ],
+                            ],
+                        }),
+                    }
+                );
+
+                if (headerResponse.ok) {
+                    console.log("헤더 추가 완료");
+                } else {
+                    console.log("헤더 추가 실패:", await headerResponse.text());
+                }
+            } else {
+                console.log("헤더가 이미 존재합니다.");
+            }
+        } else {
+            console.log("헤더 확인 실패:", await checkResponse.text());
+        }
+    } catch (error) {
+        console.error("헤더 처리 오류:", error);
+    }
+}
+
 // Google Access Token 획득
 async function getGoogleAccessToken(): Promise<string> {
     try {
@@ -195,6 +272,60 @@ async function getGoogleAccessToken(): Promise<string> {
     }
 }
 
+// 네이버웍스 사용자 정보 조회
+async function getUserInfo(userId: string): Promise<any> {
+    try {
+        console.log(`사용자 정보 조회 시작: ${userId}`);
+
+        // 네이버웍스 Access Token 발급
+        const accessToken = await getAccessToken();
+
+        // 사용자 정보 조회 (프로필 정보)
+        const response = await fetch(
+            `${process.env.NAVER_WORKS_API_URL}/users/${userId}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+            }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("사용자 정보 조회 실패:", response.status, errorText);
+            // 실패 시 기본 정보 반환
+            return {
+                name: userId.substring(0, 8) + "...",
+                email: "정보없음",
+                department: "정보없음",
+            };
+        }
+
+        const userData = await response.json();
+        console.log("사용자 정보 조회 성공:", {
+            name: userData.name,
+            email: userData.email,
+            department: userData.department,
+        });
+
+        return {
+            name: userData.name || "이름없음",
+            email: userData.email || "이메일없음",
+            department: userData.department || "부서없음",
+            position: userData.position || "직급없음",
+        };
+    } catch (error) {
+        console.error("사용자 정보 조회 오류:", error);
+        // 오류 시 기본 정보 반환
+        return {
+            name: userId.substring(0, 8) + "...",
+            email: "정보없음",
+            department: "정보없음",
+        };
+    }
+}
+
 // 구글 시트에 출근 기록 저장
 async function saveToGoogleSheet(attendanceData: {
     userId: string;
@@ -213,15 +344,20 @@ async function saveToGoogleSheet(attendanceData: {
         // Google Access Token 획득
         const accessToken = await getGoogleAccessToken();
 
+        // 사용자 정보 조회
+        const userInfo = await getUserInfo(attendanceData.userId);
+
         // 시트에 기록할 데이터 준비
         const values = [
             [
-                attendanceData.timestamp, // A열: 날짜/시간
-                attendanceData.userId, // B열: 사용자 ID
-                attendanceData.domainId, // C열: 도메인 ID
-                attendanceData.action, // D열: 액션 (출근/퇴근)
-                new Date().toLocaleString("ko-KR"), // E열: 한국 시간
-                "네이버웍스 봇", // F열: 출처
+                attendanceData.timestamp, // A열: ISO 타임스탬프
+                new Date(attendanceData.timestamp).toLocaleString("ko-KR"), // B열: 한국 시간
+                userInfo.name, // C열: 사용자 이름
+                userInfo.email, // D열: 이메일
+                userInfo.department, // E열: 부서
+                attendanceData.action, // F열: 액션 (출근/퇴근)
+                attendanceData.domainId, // G열: 도메인 ID
+                "네이버웍스 봇", // H열: 출처
             ],
         ];
 
@@ -274,6 +410,9 @@ async function saveToGoogleSheet(attendanceData: {
         }
 
         console.log(`사용할 시트 이름: ${sheetName}`);
+
+        // 헤더 확인 및 추가
+        await ensureHeaderExists(sheetId, sheetName, accessToken);
 
         // Google Sheets API 호출 (OAuth2 토큰 사용)
         const response = await fetch(
@@ -538,6 +677,9 @@ export async function POST(request: NextRequest) {
                 if (postback === "CHECKIN_ACTION") {
                     try {
                         // 구글 시트에 출근 기록 저장
+                        // 사용자 정보 조회 (메시지용)
+                        const userInfo = await getUserInfo(userId);
+
                         await saveToGoogleSheet({
                             userId: userId,
                             domainId: source.domainId,
@@ -555,9 +697,11 @@ export async function POST(request: NextRequest) {
                                         new Date(
                                             data.issuedTime
                                         ).toLocaleString("ko-KR") +
-                                        "\n• 사용자: " +
-                                        userId.substring(0, 8) +
-                                        "...\n• 도메인: " +
+                                        "\n• 이름: " +
+                                        userInfo.name +
+                                        "\n• 부서: " +
+                                        userInfo.department +
+                                        "\n• 도메인: " +
                                         source.domainId +
                                         "\n\n구글 시트에 기록되었습니다! ✅",
                                 },
