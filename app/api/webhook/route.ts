@@ -68,7 +68,18 @@ async function createPersistentMenu() {
             throw new Error(`Persistent Menu 등록 실패: ${response.status}`);
         }
 
-        const result = await response.json();
+        let result;
+        try {
+            const responseText = await response.text();
+            if (responseText) {
+                result = JSON.parse(responseText);
+            } else {
+                result = { success: true };
+            }
+        } catch (parseError) {
+            console.log("JSON 파싱 오류, 하지만 요청은 성공:", parseError);
+            result = { success: true };
+        }
         console.log("Persistent Menu 등록 성공:", result);
         return result;
     } catch (error) {
@@ -103,7 +114,20 @@ async function sendMessage(userId: string, message: any, channelId?: string) {
             throw new Error(`메시지 전송 실패: ${response.status}`);
         }
 
-        return response.json();
+        try {
+            const responseText = await response.text();
+            if (responseText) {
+                return JSON.parse(responseText);
+            } else {
+                return { success: true };
+            }
+        } catch (parseError) {
+            console.log(
+                "메시지 전송 JSON 파싱 오류, 하지만 전송은 성공:",
+                parseError
+            );
+            return { success: true };
+        }
     } catch (error) {
         console.error("sendMessage 오류:", error);
         throw error;
