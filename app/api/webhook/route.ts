@@ -44,14 +44,58 @@ function createJWT(serviceAccount: any): string {
 
     // 개인키로 서명 생성
     const privateKey = serviceAccount.private_key;
-    const signature = crypto.sign(
-        "RSA-SHA256",
-        Buffer.from(signatureInput),
-        privateKey
-    );
-    const encodedSignature = signature.toString("base64url");
 
-    return `${signatureInput}.${encodedSignature}`;
+    // Private Key 유효성 검사
+    if (!privateKey || !privateKey.includes("BEGIN PRIVATE KEY")) {
+        throw new Error("Private Key 형식이 올바르지 않습니다.");
+    }
+
+    console.log("JWT 서명 생성:");
+    console.log("- Private Key 시작:", privateKey.substring(0, 30) + "...");
+    console.log(
+        "- Private Key 포함 여부:",
+        privateKey.includes("-----BEGIN PRIVATE KEY-----")
+    );
+    console.log("- Signature Input:", signatureInput.substring(0, 100) + "...");
+
+    try {
+        const signature = crypto.sign(
+            "RSA-SHA256",
+            Buffer.from(signatureInput),
+            {
+                key: privateKey,
+                format: "pem",
+                type: "pkcs8",
+            }
+        );
+        const encodedSignature = signature.toString("base64url");
+        console.log("서명 생성 성공");
+
+        return `${signatureInput}.${encodedSignature}`;
+    } catch (signError) {
+        console.error("JWT 서명 생성 오류:", signError);
+
+        // 대안: 더 간단한 서명 방식 시도
+        try {
+            console.log("대안 서명 방식 시도...");
+            const signature = crypto.sign(
+                "sha256",
+                Buffer.from(signatureInput),
+                privateKey
+            );
+            const encodedSignature = signature.toString("base64url");
+            console.log("대안 서명 생성 성공");
+
+            return `${signatureInput}.${encodedSignature}`;
+        } catch (altError) {
+            console.error("대안 서명도 실패:", altError);
+            const errorMessage =
+                signError instanceof Error
+                    ? signError.message
+                    : String(signError);
+            throw new Error(`JWT 서명 생성 실패: ${errorMessage}`);
+        }
+    }
 }
 
 // Google Access Token 획득
@@ -73,12 +117,28 @@ async function getGoogleAccessToken(): Promise<string> {
             }
         }
 
+        // Private Key 개행 문자 처리
+        const privateKey =
+            process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(
+                /\\n/g,
+                "\n"
+            );
+
+        console.log("Private Key 처리:");
+        console.log(
+            "- 원본 길이:",
+            process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.length
+        );
+        console.log("- 처리 후 길이:", privateKey?.length);
+        console.log("- 시작 부분:", privateKey?.substring(0, 50) + "...");
+        console.log("- 끝 부분:", "..." + privateKey?.slice(-50));
+
         // 환경변수로부터 Service Account 객체 구성
         const serviceAccount = {
             type: process.env.GOOGLE_SERVICE_ACCOUNT_TYPE,
             project_id: process.env.GOOGLE_SERVICE_ACCOUNT_PROJECT_ID,
             private_key_id: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID,
-            private_key: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+            private_key: privateKey,
             client_email: process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL,
             client_id: process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_ID,
             auth_uri:
