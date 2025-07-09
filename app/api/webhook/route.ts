@@ -97,42 +97,14 @@ function createCheckinOptions() {
 }
 
 // 네이버웍스로 메시지 전송
-async function getAccessToken(): Promise<string> {
-    const tokenUrl = "https://auth.worksmobile.com/oauth2/v2.0/token";
-
-    const response = await fetch(tokenUrl, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-            grant_type: "client_credentials",
-            client_id: process.env.NAVER_WORKS_CLIENT_ID!,
-            client_secret: process.env.NAVER_WORKS_CLIENT_SECRET!,
-            scope: "bot",
-        }),
-    });
-
-    if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Access Token 발급 실패:", response.status, errorText);
-        throw new Error(`Token 발급 실패: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data.access_token;
-}
-
 async function sendMessage(accountId: string, message: any) {
     try {
-        const accessToken = await getAccessToken();
-
         const response = await fetch(
             `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/users/${accountId}/messages`,
             {
                 method: "POST",
                 headers: {
-                    Authorization: `Bearer ${accessToken}`,
+                    Authorization: `Bearer ${process.env.NAVER_WORKS_BOT_SECRET}`,
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify(message),
@@ -160,12 +132,12 @@ export async function POST(request: NextRequest) {
             request.headers.get("x-works-signature") ||
             "";
 
-        // 시그니처 검증
+        // Bot Secret을 시그니처 검증에 사용
         if (
             !verifySignature(
                 signature,
                 body,
-                process.env.NAVER_WORKS_BOT_SECRET!
+                process.env.NAVER_WORKS_BOT_SECRET! // 웹훅 시크릿이 아닌 Bot Secret 사용
             )
         ) {
             return NextResponse.json(
