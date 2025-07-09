@@ -7,6 +7,7 @@ import {
     getAttendanceStats,
     calculateWorkingHours,
 } from "@/lib/db";
+import { getAccessToken } from "@/lib/auth";
 
 // 네이버웍스 웹훅 시그니처 검증
 function verifySignature(
@@ -108,10 +109,14 @@ async function sendMessage(userId: string, message: any, channelId?: string) {
             `메시지 전송 시도: ${channelId ? "채널" : "사용자"} - ${endpoint}`
         );
 
+        // Access Token 발급받기
+        const accessToken = await getAccessToken();
+        console.log("Access Token 발급 완료");
+
         const response = await fetch(endpoint, {
             method: "POST",
             headers: {
-                Authorization: `Bearer ${process.env.NAVER_WORKS_BOT_SECRET}`,
+                Authorization: `Bearer ${accessToken}`,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify(message),
