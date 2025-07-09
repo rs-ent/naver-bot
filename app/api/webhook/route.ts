@@ -111,7 +111,7 @@ async function ensureHeaderExists(
         const checkResponse = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A1:H1`,
+            )}!A1:K1`,
             {
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -135,7 +135,7 @@ async function ensureHeaderExists(
                 const headerResponse = await fetch(
                     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                         sheetName
-                    )}!A1:H1?valueInputOption=RAW`,
+                    )}!A1:K1?valueInputOption=RAW`,
                     {
                         method: "PUT",
                         headers: {
@@ -150,9 +150,12 @@ async function ensureHeaderExists(
                                     "이름", // C열
                                     "이메일", // D열
                                     "부서", // E열
-                                    "액션", // F열
-                                    "도메인ID", // G열
-                                    "출처", // H열
+                                    "직급", // F열
+                                    "직책", // G열
+                                    "사번", // H열
+                                    "액션", // I열
+                                    "도메인ID", // J열
+                                    "출처", // K열
                                 ],
                             ],
                         }),
@@ -299,21 +302,43 @@ async function getUserInfo(userId: string): Promise<any> {
                 name: userId.substring(0, 8) + "...",
                 email: "정보없음",
                 department: "정보없음",
+                level: "정보없음",
+                position: "정보없음",
+                employeeNumber: "정보없음",
             };
         }
 
         const userData = await response.json();
+
+        // 이름 구성 (성 + 이름)
+        const fullName =
+            `${userData.userName?.lastName || ""} ${
+                userData.userName?.firstName || ""
+            }`.trim() || "이름없음";
+
+        // 조직 정보 추출 (primary 조직 우선)
+        const primaryOrg =
+            userData.organizations?.find((org: any) => org.primary) ||
+            userData.organizations?.[0];
+        const primaryOrgUnit =
+            primaryOrg?.orgUnits?.find((unit: any) => unit.primary) ||
+            primaryOrg?.orgUnits?.[0];
+
         console.log("사용자 정보 조회 성공:", {
-            name: userData.name,
+            name: fullName,
             email: userData.email,
-            department: userData.department,
+            department: primaryOrgUnit?.orgUnitName,
+            level: primaryOrg?.levelName,
+            position: primaryOrgUnit?.positionName,
         });
 
         return {
-            name: userData.name || "이름없음",
+            name: fullName,
             email: userData.email || "이메일없음",
-            department: userData.department || "부서없음",
-            position: userData.position || "직급없음",
+            department: primaryOrgUnit?.orgUnitName || "부서없음",
+            level: primaryOrg?.levelName || "직급없음",
+            position: primaryOrgUnit?.positionName || "직책없음",
+            employeeNumber: userData.employeeNumber || "사번없음",
         };
     } catch (error) {
         console.error("사용자 정보 조회 오류:", error);
@@ -322,6 +347,9 @@ async function getUserInfo(userId: string): Promise<any> {
             name: userId.substring(0, 8) + "...",
             email: "정보없음",
             department: "정보없음",
+            level: "정보없음",
+            position: "정보없음",
+            employeeNumber: "정보없음",
         };
     }
 }
@@ -355,9 +383,12 @@ async function saveToGoogleSheet(attendanceData: {
                 userInfo.name, // C열: 사용자 이름
                 userInfo.email, // D열: 이메일
                 userInfo.department, // E열: 부서
-                attendanceData.action, // F열: 액션 (출근/퇴근)
-                attendanceData.domainId, // G열: 도메인 ID
-                "네이버웍스 봇", // H열: 출처
+                userInfo.level, // F열: 직급
+                userInfo.position, // G열: 직책
+                userInfo.employeeNumber, // H열: 사번
+                attendanceData.action, // I열: 액션 (출근/퇴근)
+                attendanceData.domainId, // J열: 도메인 ID
+                "네이버웍스 봇", // K열: 출처
             ],
         ];
 
@@ -699,8 +730,16 @@ export async function POST(request: NextRequest) {
                                         ).toLocaleString("ko-KR") +
                                         "\n• 이름: " +
                                         userInfo.name +
+                                        "\n• 이메일: " +
+                                        userInfo.email +
                                         "\n• 부서: " +
                                         userInfo.department +
+                                        "\n• 직급: " +
+                                        userInfo.level +
+                                        "\n• 직책: " +
+                                        userInfo.position +
+                                        "\n• 사번: " +
+                                        userInfo.employeeNumber +
                                         "\n• 도메인: " +
                                         source.domainId +
                                         "\n\n구글 시트에 기록되었습니다! ✅",
