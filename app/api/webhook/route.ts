@@ -132,21 +132,30 @@ export async function POST(request: NextRequest) {
             request.headers.get("x-works-signature") ||
             "";
 
+        console.log("=== 웹훅 수신 ===");
+        console.log("Body:", body);
+        console.log("Signature:", signature);
+
         // Bot Secret을 시그니처 검증에 사용
         if (
             !verifySignature(
                 signature,
                 body,
-                process.env.NAVER_WORKS_BOT_SECRET! // 웹훅 시크릿이 아닌 Bot Secret 사용
+                process.env.NAVER_WORKS_BOT_SECRET!
             )
         ) {
+            console.log("시그니처 검증 실패");
             return NextResponse.json(
                 { error: "Invalid signature" },
                 { status: 401 }
             );
         }
 
+        console.log("시그니처 검증 성공");
+
         const data = JSON.parse(body);
+        console.log("파싱된 데이터:", JSON.stringify(data, null, 2));
+
         const { type, source, content } = data;
 
         // 메시지 타입별 처리
