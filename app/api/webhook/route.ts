@@ -12,6 +12,129 @@ function extractSheetId(url: string | undefined): string {
     return match ? match[1] : "";
 }
 
+// Google Service Account JWT 토큰 생성
+function createJWT(serviceAccount: any): string {
+    // JWT 헤더
+    const header = {
+        alg: "RS256",
+        typ: "JWT",
+        kid: serviceAccount.private_key_id, // Key ID 추가
+    };
+
+    // JWT 페이로드
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+        iss: serviceAccount.client_email,
+        scope: "https://www.googleapis.com/auth/spreadsheets",
+        aud: "https://oauth2.googleapis.com/token",
+        iat: now,
+        exp: now + 3600, // 1시간
+    };
+
+    // Base64URL 인코딩
+    const encodedHeader = Buffer.from(JSON.stringify(header)).toString(
+        "base64url"
+    );
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+        "base64url"
+    );
+
+    // 서명할 데이터
+    const signatureInput = `${encodedHeader}.${encodedPayload}`;
+
+    // 개인키로 서명 생성
+    const privateKey = serviceAccount.private_key;
+    const signature = crypto.sign(
+        "RSA-SHA256",
+        Buffer.from(signatureInput),
+        privateKey
+    );
+    const encodedSignature = signature.toString("base64url");
+
+    return `${signatureInput}.${encodedSignature}`;
+}
+
+// Google Access Token 획득
+async function getGoogleAccessToken(): Promise<string> {
+    try {
+        // 필수 환경변수 확인
+        const requiredEnvs = [
+            "GOOGLE_SERVICE_ACCOUNT_TYPE",
+            "GOOGLE_SERVICE_ACCOUNT_PROJECT_ID",
+            "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID",
+            "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY",
+            "GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL",
+            "GOOGLE_SERVICE_ACCOUNT_CLIENT_ID",
+        ];
+
+        for (const env of requiredEnvs) {
+            if (!process.env[env]) {
+                throw new Error(`${env} 환경 변수가 설정되지 않았습니다.`);
+            }
+        }
+
+        // 환경변수로부터 Service Account 객체 구성
+        const serviceAccount = {
+            type: process.env.GOOGLE_SERVICE_ACCOUNT_TYPE,
+            project_id: process.env.GOOGLE_SERVICE_ACCOUNT_PROJECT_ID,
+            private_key_id: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID,
+            private_key: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+            client_email: process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL,
+            client_id: process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_ID,
+            auth_uri:
+                process.env.GOOGLE_SERVICE_ACCOUNT_AUTH_URI ||
+                "https://accounts.google.com/o/oauth2/auth",
+            token_uri:
+                process.env.GOOGLE_SERVICE_ACCOUNT_TOKEN_URI ||
+                "https://oauth2.googleapis.com/token",
+            auth_provider_x509_cert_url:
+                process.env.GOOGLE_SERVICE_ACCOUNT_AUTH_CERT_URL ||
+                "https://www.googleapis.com/oauth2/v1/certs",
+            client_x509_cert_url:
+                process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_CERT_URL,
+            universe_domain:
+                process.env.GOOGLE_SERVICE_ACCOUNT_UNIVERSE_DOMAIN ||
+                "googleapis.com",
+        };
+
+        console.log("Service Account 정보 확인:");
+        console.log("- 프로젝트 ID:", serviceAccount.project_id);
+        console.log("- 클라이언트 이메일:", serviceAccount.client_email);
+        console.log("- Private Key ID:", serviceAccount.private_key_id);
+
+        const jwt = createJWT(serviceAccount);
+
+        // Google OAuth2 서버에서 액세스 토큰 요청
+        const response = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+                grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                assertion: jwt,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(
+                "Google OAuth2 토큰 요청 실패:",
+                response.status,
+                errorText
+            );
+            throw new Error(`Google OAuth2 토큰 요청 실패: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log("Google Access Token 발급 성공");
+        return data.access_token;
+    } catch (error) {
+        console.error("Google Access Token 발급 오류:", error);
+        throw error;
+    }
+}
+
 // 구글 시트에 출근 기록 저장
 async function saveToGoogleSheet(attendanceData: {
     userId: string;
@@ -20,24 +143,15 @@ async function saveToGoogleSheet(attendanceData: {
     timestamp: string;
 }) {
     try {
-        // 환경 변수 확인
-        console.log("환경 변수 확인:");
-        console.log("GOOGLE_SHEET_URL:", process.env.GOOGLE_SHEET_URL);
-        console.log(
-            "GOOGLE_API_KEY:",
-            process.env.GOOGLE_API_KEY ? "설정됨" : "설정되지 않음"
-        );
+        console.log("=== Google Service Account 인증 시작 ===");
 
         const sheetId = extractSheetId(process.env.GOOGLE_SHEET_URL);
         if (!sheetId) {
             throw new Error("구글 시트 ID를 추출할 수 없습니다.");
         }
 
-        if (!process.env.GOOGLE_API_KEY) {
-            throw new Error("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.");
-        }
-
-        const worksheetId = process.env.GOOGLE_SHEET_WORKSHEET || "0";
+        // Google Access Token 획득
+        const accessToken = await getGoogleAccessToken();
 
         // 시트에 기록할 데이터 준비
         const values = [
@@ -51,12 +165,13 @@ async function saveToGoogleSheet(attendanceData: {
             ],
         ];
 
-        // Google Sheets API 호출
+        // Google Sheets API 호출 (OAuth2 토큰 사용)
         const response = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1:append?valueInputOption=RAW&key=${process.env.GOOGLE_API_KEY}`,
+            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1:append?valueInputOption=RAW`,
             {
                 method: "POST",
                 headers: {
+                    Authorization: `Bearer ${accessToken}`,
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
