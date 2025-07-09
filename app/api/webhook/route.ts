@@ -3,7 +3,11 @@ import crypto from "crypto";
 import { getAccessToken } from "@/lib/auth";
 
 // 구글 시트 ID 추출 함수
-function extractSheetId(url: string): string {
+function extractSheetId(url: string | undefined): string {
+    if (!url) {
+        console.error("GOOGLE_SHEET_URL 환경 변수가 설정되지 않았습니다.");
+        return "";
+    }
     const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
     return match ? match[1] : "";
 }
@@ -16,7 +20,23 @@ async function saveToGoogleSheet(attendanceData: {
     timestamp: string;
 }) {
     try {
-        const sheetId = extractSheetId(process.env.GOOGLE_SHEET_URL!);
+        // 환경 변수 확인
+        console.log("환경 변수 확인:");
+        console.log("GOOGLE_SHEET_URL:", process.env.GOOGLE_SHEET_URL);
+        console.log(
+            "GOOGLE_API_KEY:",
+            process.env.GOOGLE_API_KEY ? "설정됨" : "설정되지 않음"
+        );
+
+        const sheetId = extractSheetId(process.env.GOOGLE_SHEET_URL);
+        if (!sheetId) {
+            throw new Error("구글 시트 ID를 추출할 수 없습니다.");
+        }
+
+        if (!process.env.GOOGLE_API_KEY) {
+            throw new Error("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.");
+        }
+
         const worksheetId = process.env.GOOGLE_SHEET_WORKSHEET || "0";
 
         // 시트에 기록할 데이터 준비
