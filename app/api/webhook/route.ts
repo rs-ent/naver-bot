@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getAccessToken } from "@/lib/auth";
+import { put } from "@vercel/blob";
+import sharp from "sharp";
 
 // 구글 시트 ID 추출 함수
 function extractSheetId(url: string | undefined): string {
@@ -111,7 +113,7 @@ async function ensureHeaderExists(
         const checkResponse = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A1:K1`,
+            )}!A1:L1`,
             {
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -135,7 +137,7 @@ async function ensureHeaderExists(
                 const headerResponse = await fetch(
                     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                         sheetName
-                    )}!A1:K1?valueInputOption=RAW`,
+                    )}!A1:L1?valueInputOption=RAW`,
                     {
                         method: "PUT",
                         headers: {
@@ -156,6 +158,7 @@ async function ensureHeaderExists(
                                     "액션", // I열
                                     "도메인ID", // J열
                                     "출처", // K열
+                                    "이미지URL", // L열
                                 ],
                             ],
                         }),
@@ -354,12 +357,63 @@ async function getUserInfo(userId: string): Promise<any> {
     }
 }
 
+// 이미지를 WebP로 압축하고 Vercel Blob에 저장
+async function saveImageToBlob(
+    imageBuffer: Buffer,
+    userId: string,
+    timestamp: string
+): Promise<string> {
+    try {
+        console.log("=== 이미지 압축 및 Blob 저장 시작 ===");
+        console.log("- 원본 이미지 크기:", imageBuffer.length, "bytes");
+
+        // Sharp를 사용해 WebP로 변환 및 압축
+        const compressedImage = await sharp(imageBuffer)
+            .webp({
+                quality: 80, // 품질 80% (파일 크기와 품질의 균형)
+                effort: 6, // 압축 노력 수준 (0-6, 높을수록 더 많이 압축)
+            })
+            .resize({
+                width: 1920, // 최대 가로 크기
+                height: 1920, // 최대 세로 크기
+                fit: "inside", // 비율 유지하면서 크기 조정
+                withoutEnlargement: true, // 원본보다 크게 만들지 않음
+            })
+            .toBuffer();
+
+        console.log("- 압축된 이미지 크기:", compressedImage.length, "bytes");
+        console.log(
+            "- 압축률:",
+            Math.round(
+                (1 - compressedImage.length / imageBuffer.length) * 100
+            ) + "%"
+        );
+
+        // 파일명 생성 (userId_timestamp.webp)
+        const filename = `attendance_${userId}_${Date.now()}.webp`;
+
+        // Vercel Blob에 업로드
+        const blob = await put(filename, compressedImage, {
+            access: "public", // 공개 접근 허용
+            contentType: "image/webp",
+        });
+
+        console.log("- Blob 업로드 성공:", blob.url);
+
+        return blob.url;
+    } catch (error) {
+        console.error("이미지 Blob 저장 오류:", error);
+        throw error;
+    }
+}
+
 // 구글 시트에 출근 기록 저장
 async function saveToGoogleSheet(attendanceData: {
     userId: string;
     domainId: number;
     action: string;
     timestamp: string;
+    imageUrl?: string; // 이미지 URL (선택적)
 }) {
     try {
         console.log("=== Google Service Account 인증 시작 ===");
@@ -386,9 +440,10 @@ async function saveToGoogleSheet(attendanceData: {
                 userInfo.level, // F열: 직급
                 userInfo.position, // G열: 직책
                 userInfo.employeeNumber, // H열: 사번
-                attendanceData.action, // I열: 액션 (출근/퇴근)
+                attendanceData.action, // I열: 액션 (출근/퇴근/이미지업로드)
                 attendanceData.domainId, // J열: 도메인 ID
                 "네이버웍스 봇", // K열: 출처
+                attendanceData.imageUrl || "", // L열: 이미지 URL (없으면 빈 문자열)
             ],
         ];
 
@@ -650,15 +705,93 @@ export async function POST(request: NextRequest) {
         // 메시지 타입 처리
         if (type === "message") {
             const { userId, channelId } = source;
-            const { text, postback } = content;
+            const { text, postback, type: contentType, resourceUrl } = content;
 
             console.log(
                 `메시지 수신: ${
                     channelId ? "채널" : "1:1 채팅"
                 } - userId: ${userId}${
                     channelId ? ", channelId: " + channelId : ""
-                }`
+                }, contentType: ${contentType}`
             );
+
+            // 이미지 메시지 처리
+            if (contentType === "image" && resourceUrl) {
+                try {
+                    console.log("이미지 메시지 처리 시작:", resourceUrl);
+
+                    // 네이버웍스에서 이미지 다운로드
+                    const accessToken = await getAccessToken();
+                    const imageResponse = await fetch(resourceUrl, {
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                        },
+                    });
+
+                    if (!imageResponse.ok) {
+                        throw new Error(
+                            `이미지 다운로드 실패: ${imageResponse.status}`
+                        );
+                    }
+
+                    // 이미지를 Buffer로 변환
+                    const imageBuffer = Buffer.from(
+                        await imageResponse.arrayBuffer()
+                    );
+
+                    // Vercel Blob에 압축하여 저장
+                    const blobUrl = await saveImageToBlob(
+                        imageBuffer,
+                        userId,
+                        data.issuedTime
+                    );
+
+                    // 사용자 정보 조회
+                    const userInfo = await getUserInfo(userId);
+
+                    // 구글 시트에 이미지 기록 저장 (출근 기록과 동일한 형태로)
+                    await saveToGoogleSheet({
+                        userId: userId,
+                        domainId: source.domainId,
+                        action: "이미지업로드",
+                        timestamp: data.issuedTime,
+                        imageUrl: blobUrl, // 이미지 URL 추가
+                    });
+
+                    // 사용자에게 완료 메시지 전송
+                    await sendMessage(
+                        userId,
+                        {
+                            content: {
+                                type: "text",
+                                text:
+                                    `📸 이미지가 성공적으로 업로드되었습니다!\n\n` +
+                                    `👤 업로드 정보:\n` +
+                                    `• 시간: ${new Date(
+                                        data.issuedTime
+                                    ).toLocaleString("ko-KR")}\n` +
+                                    `• 이름: ${userInfo.name}\n` +
+                                    `• 부서: ${userInfo.department}\n` +
+                                    `• 압축된 이미지: ${blobUrl}\n\n` +
+                                    `구글 시트에 기록되었습니다! ✅`,
+                            },
+                        },
+                        channelId
+                    );
+                } catch (error) {
+                    console.error("이미지 처리 오류:", error);
+                    await sendMessage(
+                        userId,
+                        {
+                            content: {
+                                type: "text",
+                                text: "❌ 이미지 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
+                            },
+                        },
+                        channelId
+                    );
+                }
+            }
 
             // /test 명령어 처리
             if (text === "/test") {
