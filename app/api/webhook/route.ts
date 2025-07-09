@@ -225,9 +225,61 @@ async function saveToGoogleSheet(attendanceData: {
             ],
         ];
 
+        // 시트 이름 또는 인덱스 처리
+        const worksheet = process.env.GOOGLE_SHEET_WORKSHEET || "0";
+        let sheetName = "Sheet1"; // 기본값
+
+        // 숫자인 경우 인덱스로 판단하여 시트 정보 조회
+        if (/^\d+$/.test(worksheet)) {
+            try {
+                console.log(
+                    `시트 인덱스 ${worksheet}에 해당하는 시트 이름 조회 중...`
+                );
+
+                // 스프레드시트 메타데이터 조회
+                const metaResponse = await fetch(
+                    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties`,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                        },
+                    }
+                );
+
+                if (metaResponse.ok) {
+                    const metadata = await metaResponse.json();
+                    const sheets = metadata.sheets;
+                    const sheetIndex = parseInt(worksheet);
+
+                    if (sheets && sheets[sheetIndex]) {
+                        sheetName = sheets[sheetIndex].properties.title;
+                        console.log(
+                            `인덱스 ${sheetIndex}의 시트 이름: ${sheetName}`
+                        );
+                    } else {
+                        console.log(
+                            `인덱스 ${sheetIndex}에 해당하는 시트가 없음. 기본값 사용: ${sheetName}`
+                        );
+                    }
+                } else {
+                    console.log("시트 메타데이터 조회 실패. 기본값 사용");
+                }
+            } catch (metaError) {
+                console.log("시트 이름 조회 오류:", metaError);
+                console.log("기본값 사용:", sheetName);
+            }
+        } else {
+            // 문자열인 경우 시트 이름으로 직접 사용
+            sheetName = worksheet;
+        }
+
+        console.log(`사용할 시트 이름: ${sheetName}`);
+
         // Google Sheets API 호출 (OAuth2 토큰 사용)
         const response = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1:append?valueInputOption=RAW`,
+            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+                sheetName
+            )}:append?valueInputOption=RAW`,
             {
                 method: "POST",
                 headers: {
