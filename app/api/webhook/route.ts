@@ -96,20 +96,26 @@ function createCheckinOptions() {
     };
 }
 
-// 네이버웍스로 메시지 전송
-async function sendMessage(accountId: string, message: any) {
+// 네이버웍스로 메시지 전송 - 1:1 채팅과 그룹 채팅 모두 지원
+async function sendMessage(userId: string, message: any, channelId?: string) {
     try {
-        const response = await fetch(
-            `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/users/${accountId}/messages`,
-            {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${process.env.NAVER_WORKS_BOT_SECRET}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(message),
-            }
+        // channelId가 있으면 채널 메시지, 없으면 사용자 직접 메시지
+        const endpoint = channelId
+            ? `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/channels/${channelId}/messages`
+            : `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/users/${userId}/messages`;
+
+        console.log(
+            `메시지 전송 시도: ${channelId ? "채널" : "사용자"} - ${endpoint}`
         );
+
+        const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${process.env.NAVER_WORKS_BOT_SECRET}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(message),
+        });
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -160,42 +166,62 @@ export async function POST(request: NextRequest) {
 
         // 메시지 타입별 처리
         if (type === "message") {
-            const { userId } = source;
+            const { userId, channelId } = source;
             const accountId = userId; // userId를 accountId로 사용
             const { text, postback } = content;
 
+            console.log(
+                `메시지 수신: ${
+                    channelId ? "채널" : "1:1 채팅"
+                } - userId: ${userId}${
+                    channelId ? ", channelId: " + channelId : ""
+                }`
+            );
+
             // 텍스트 명령어 처리
             if (text === "/출근" || text === "/attendance") {
-                await sendMessage(accountId, createAttendanceButtons());
+                await sendMessage(
+                    accountId,
+                    createAttendanceButtons(),
+                    channelId
+                );
             }
 
             // 버튼 postback 처리
             else if (postback) {
                 switch (postback) {
                     case "CHECKIN_START":
-                        await sendMessage(accountId, createCheckinOptions());
+                        await sendMessage(
+                            accountId,
+                            createCheckinOptions(),
+                            channelId
+                        );
                         break;
 
                     case "CHECKIN_PHOTO":
-                        await sendMessage(accountId, {
-                            content: {
-                                type: "button_template",
-                                contentText:
-                                    "📷 출근 인증 사진을 업로드해주세요!\n\n사진을 채팅창에 올려주시면 자동으로 인증됩니다.",
-                                actions: [
-                                    {
-                                        type: "message",
-                                        label: "✅ 사진 업로드 완료",
-                                        postback: "PHOTO_UPLOADED",
-                                    },
-                                    {
-                                        type: "message",
-                                        label: "🔄 다시 선택",
-                                        postback: "CHECKIN_START",
-                                    },
-                                ],
+                        await sendMessage(
+                            accountId,
+                            {
+                                content: {
+                                    type: "button_template",
+                                    contentText:
+                                        "📷 출근 인증 사진을 업로드해주세요!\n\n사진을 채팅창에 올려주시면 자동으로 인증됩니다.",
+                                    actions: [
+                                        {
+                                            type: "message",
+                                            label: "✅ 사진 업로드 완료",
+                                            postback: "PHOTO_UPLOADED",
+                                        },
+                                        {
+                                            type: "message",
+                                            label: "🔄 다시 선택",
+                                            postback: "CHECKIN_START",
+                                        },
+                                    ],
+                                },
                             },
-                        });
+                            channelId
+                        );
                         break;
 
                     case "CHECKIN_LOCATION":
@@ -211,40 +237,56 @@ export async function POST(request: NextRequest) {
                                 ? "\n⚠️ 지각 처리되었습니다."
                                 : "";
 
-                            await sendMessage(accountId, {
-                                content: {
-                                    type: "text",
-                                    text: `📍 위치 인증이 완료되었습니다!\n출근 시간: ${timeStr}${lateMessage}\n\n오늘도 좋은 하루 되세요! 😊`,
+                            await sendMessage(
+                                accountId,
+                                {
+                                    content: {
+                                        type: "text",
+                                        text: `📍 위치 인증이 완료되었습니다!\n출근 시간: ${timeStr}${lateMessage}\n\n오늘도 좋은 하루 되세요! 😊`,
+                                    },
                                 },
-                            });
+                                channelId
+                            );
                         } catch (error) {
                             console.error("출근 처리 오류:", error);
-                            await sendMessage(accountId, {
-                                content: {
-                                    type: "text",
-                                    text: "❌ 출근 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+                            await sendMessage(
+                                accountId,
+                                {
+                                    content: {
+                                        type: "text",
+                                        text: "❌ 출근 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+                                    },
                                 },
-                            });
+                                channelId
+                            );
                         }
                         break;
 
                     case "CHECKIN_TEXT":
-                        await sendMessage(accountId, {
-                            content: {
-                                type: "text",
-                                text: "✏️ 오늘의 업무 계획을 입력해주세요!\n\n메시지를 보내주시면 텍스트 인증이 완료됩니다.",
+                        await sendMessage(
+                            accountId,
+                            {
+                                content: {
+                                    type: "text",
+                                    text: "✏️ 오늘의 업무 계획을 입력해주세요!\n\n메시지를 보내주시면 텍스트 인증이 완료됩니다.",
+                                },
                             },
-                        });
+                            channelId
+                        );
                         // 텍스트 입력 대기 상태 저장 (실제로는 세션 관리가 필요)
                         break;
 
                     case "PHOTO_UPLOADED":
-                        await sendMessage(accountId, {
-                            content: {
-                                type: "text",
-                                text: "📷 사진을 채팅창에 업로드해주세요!",
+                        await sendMessage(
+                            accountId,
+                            {
+                                content: {
+                                    type: "text",
+                                    text: "📷 사진을 채팅창에 업로드해주세요!",
+                                },
                             },
-                        });
+                            channelId
+                        );
                         break;
 
                     case "ATTENDANCE_STATUS":
@@ -276,20 +318,28 @@ export async function POST(request: NextRequest) {
                             }일\n`;
                             statusText += `• 지각: ${stats?.lateCount || 0}일`;
 
-                            await sendMessage(accountId, {
-                                content: {
-                                    type: "text",
-                                    text: statusText,
+                            await sendMessage(
+                                accountId,
+                                {
+                                    content: {
+                                        type: "text",
+                                        text: statusText,
+                                    },
                                 },
-                            });
+                                channelId
+                            );
                         } catch (error) {
                             console.error("출근 현황 조회 오류:", error);
-                            await sendMessage(accountId, {
-                                content: {
-                                    type: "text",
-                                    text: "❌ 출근 현황을 조회하는 중 오류가 발생했습니다.",
+                            await sendMessage(
+                                accountId,
+                                {
+                                    content: {
+                                        type: "text",
+                                        text: "❌ 출근 현황을 조회하는 중 오류가 발생했습니다.",
+                                    },
                                 },
-                            });
+                                channelId
+                            );
                         }
                         break;
 
@@ -306,25 +356,37 @@ export async function POST(request: NextRequest) {
                                 accountId
                             );
 
-                            await sendMessage(accountId, {
-                                content: {
-                                    type: "text",
-                                    text: `🔴 퇴근 처리가 완료되었습니다!\n퇴근 시간: ${timeStr}\n오늘 근무시간: ${workingHours}시간\n\n오늘도 수고하셨습니다! 👏`,
+                            await sendMessage(
+                                accountId,
+                                {
+                                    content: {
+                                        type: "text",
+                                        text: `🔴 퇴근 처리가 완료되었습니다!\n퇴근 시간: ${timeStr}\n오늘 근무시간: ${workingHours}시간\n\n오늘도 수고하셨습니다! 👏`,
+                                    },
                                 },
-                            });
+                                channelId
+                            );
                         } catch (error) {
                             console.error("퇴근 처리 오류:", error);
-                            await sendMessage(accountId, {
-                                content: {
-                                    type: "text",
-                                    text: "❌ 퇴근 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+                            await sendMessage(
+                                accountId,
+                                {
+                                    content: {
+                                        type: "text",
+                                        text: "❌ 퇴근 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+                                    },
                                 },
-                            });
+                                channelId
+                            );
                         }
                         break;
 
                     default:
-                        await sendMessage(accountId, createAttendanceButtons());
+                        await sendMessage(
+                            accountId,
+                            createAttendanceButtons(),
+                            channelId
+                        );
                 }
             }
 
@@ -348,36 +410,57 @@ export async function POST(request: NextRequest) {
                             ? "\n⚠️ 지각 처리되었습니다."
                             : "";
 
-                        await sendMessage(accountId, {
-                            content: {
-                                type: "text",
-                                text: `✏️ 텍스트 인증이 완료되었습니다!\n출근 시간: ${timeStr}${lateMessage}\n업무 계획: ${text}\n\n오늘도 좋은 하루 되세요! 😊`,
+                        await sendMessage(
+                            accountId,
+                            {
+                                content: {
+                                    type: "text",
+                                    text: `✏️ 텍스트 인증이 완료되었습니다!\n출근 시간: ${timeStr}${lateMessage}\n업무 계획: ${text}\n\n오늘도 좋은 하루 되세요! 😊`,
+                                },
                             },
-                        });
+                            channelId
+                        );
                     } catch (error) {
                         console.error("텍스트 인증 처리 오류:", error);
-                        await sendMessage(accountId, {
+                        await sendMessage(
+                            accountId,
+                            {
+                                content: {
+                                    type: "text",
+                                    text: "안녕하세요! 출근 관리 봇입니다. '/출근' 명령어를 입력해보세요!",
+                                },
+                            },
+                            channelId
+                        );
+                    }
+                } else {
+                    await sendMessage(
+                        accountId,
+                        {
                             content: {
                                 type: "text",
                                 text: "안녕하세요! 출근 관리 봇입니다. '/출근' 명령어를 입력해보세요!",
                             },
-                        });
-                    }
-                } else {
-                    await sendMessage(accountId, {
-                        content: {
-                            type: "text",
-                            text: "안녕하세요! 출근 관리 봇입니다. '/출근' 명령어를 입력해보세요!",
                         },
-                    });
+                        channelId
+                    );
                 }
             }
         }
 
         // 이미지 메시지 처리
         else if (type === "image") {
-            const { userId } = source;
+            const { userId, channelId } = source;
             const accountId = userId;
+
+            console.log(
+                `이미지 수신: ${
+                    channelId ? "채널" : "1:1 채팅"
+                } - userId: ${userId}${
+                    channelId ? ", channelId: " + channelId : ""
+                }`
+            );
+
             try {
                 // 이미지 URL 처리 (실제로는 content에서 이미지 정보를 가져와야 함)
                 const photoUrl =
@@ -395,20 +478,28 @@ export async function POST(request: NextRequest) {
                     ? "\n⚠️ 지각 처리되었습니다."
                     : "";
 
-                await sendMessage(accountId, {
-                    content: {
-                        type: "text",
-                        text: `📷 출근 인증 사진이 등록되었습니다!\n출근 시간: ${timeStr}${lateMessage}\n\n오늘도 좋은 하루 되세요! 😊`,
+                await sendMessage(
+                    accountId,
+                    {
+                        content: {
+                            type: "text",
+                            text: `📷 출근 인증 사진이 등록되었습니다!\n출근 시간: ${timeStr}${lateMessage}\n\n오늘도 좋은 하루 되세요! 😊`,
+                        },
                     },
-                });
+                    channelId
+                );
             } catch (error) {
                 console.error("사진 인증 처리 오류:", error);
-                await sendMessage(accountId, {
-                    content: {
-                        type: "text",
-                        text: "❌ 사진 인증 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+                await sendMessage(
+                    accountId,
+                    {
+                        content: {
+                            type: "text",
+                            text: "❌ 사진 인증 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+                        },
                     },
-                });
+                    channelId
+                );
             }
         }
 
