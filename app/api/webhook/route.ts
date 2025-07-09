@@ -97,20 +97,59 @@ function createCheckinOptions() {
 }
 
 // 네이버웍스로 메시지 전송
-async function sendMessage(accountId: string, message: any) {
-    const response = await fetch(
-        `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/users/${accountId}/messages`,
-        {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${process.env.NAVER_WORKS_BOT_SECRET}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(message),
-        }
-    );
+async function getAccessToken(): Promise<string> {
+    const tokenUrl = "https://auth.worksmobile.com/oauth2/v2.0/token";
 
-    return response.json();
+    const response = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: process.env.NAVER_WORKS_CLIENT_ID!,
+            client_secret: process.env.NAVER_WORKS_CLIENT_SECRET!,
+            scope: "bot",
+        }),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Access Token 발급 실패:", response.status, errorText);
+        throw new Error(`Token 발급 실패: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.access_token;
+}
+
+async function sendMessage(accountId: string, message: any) {
+    try {
+        const accessToken = await getAccessToken();
+
+        const response = await fetch(
+            `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/users/${accountId}/messages`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(message),
+            }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("메시지 전송 실패:", response.status, errorText);
+            throw new Error(`메시지 전송 실패: ${response.status}`);
+        }
+
+        return response.json();
+    } catch (error) {
+        console.error("sendMessage 오류:", error);
+        throw error;
+    }
 }
 
 export async function POST(request: NextRequest) {
