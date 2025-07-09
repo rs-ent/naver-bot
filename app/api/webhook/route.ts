@@ -16,6 +16,55 @@ function verifySignature(
     return signature === expectedSignature;
 }
 
+// Persistent Menu 등록 함수
+async function createPersistentMenu() {
+    try {
+        const accessToken = await getAccessToken();
+
+        const menuData = {
+            content: {
+                actions: [
+                    {
+                        type: "message",
+                        label: "출근하기",
+                        postback: "CHECKIN_ACTION",
+                        text: "출근하기",
+                    },
+                ],
+            },
+        };
+
+        const response = await fetch(
+            `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/persistentmenu`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(menuData),
+            }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(
+                "Persistent Menu 등록 실패:",
+                response.status,
+                errorText
+            );
+            throw new Error(`Persistent Menu 등록 실패: ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log("Persistent Menu 등록 성공:", result);
+        return result;
+    } catch (error) {
+        console.error("createPersistentMenu 오류:", error);
+        throw error;
+    }
+}
+
 // 네이버웍스로 메시지 전송
 async function sendMessage(userId: string, message: any, channelId?: string) {
     try {
@@ -86,7 +135,7 @@ export async function POST(request: NextRequest) {
         // 메시지 타입 처리
         if (type === "message") {
             const { userId, channelId } = source;
-            const { text } = content;
+            const { text, postback } = content;
 
             console.log(
                 `메시지 수신: ${
@@ -108,6 +157,51 @@ export async function POST(request: NextRequest) {
                     },
                     channelId
                 );
+            }
+
+            // /menu 명령어 처리 (Persistent Menu 등록)
+            else if (text === "/menu") {
+                try {
+                    await createPersistentMenu();
+                    await sendMessage(
+                        userId,
+                        {
+                            content: {
+                                type: "text",
+                                text: "✅ 출근하기 버튼이 등록되었습니다!\n이제 하단에 '출근하기' 버튼을 사용할 수 있습니다.",
+                            },
+                        },
+                        channelId
+                    );
+                } catch (error) {
+                    console.error("메뉴 등록 오류:", error);
+                    await sendMessage(
+                        userId,
+                        {
+                            content: {
+                                type: "text",
+                                text: "❌ 메뉴 등록 중 오류가 발생했습니다. 다시 시도해주세요.",
+                            },
+                        },
+                        channelId
+                    );
+                }
+            }
+
+            // Persistent Menu 버튼 postback 처리
+            else if (postback) {
+                if (postback === "CHECKIN_ACTION") {
+                    await sendMessage(
+                        userId,
+                        {
+                            content: {
+                                type: "text",
+                                text: "🟢 출근하기 버튼이 클릭되었습니다!\n(아직 실제 출근 처리는 구현되지 않았습니다)",
+                            },
+                        },
+                        channelId
+                    );
+                }
             }
         }
 
