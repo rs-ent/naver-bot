@@ -2,6 +2,68 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getAccessToken } from "@/lib/auth";
 
+// 구글 시트 ID 추출 함수
+function extractSheetId(url: string): string {
+    const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return match ? match[1] : "";
+}
+
+// 구글 시트에 출근 기록 저장
+async function saveToGoogleSheet(attendanceData: {
+    userId: string;
+    domainId: number;
+    action: string;
+    timestamp: string;
+}) {
+    try {
+        const sheetId = extractSheetId(process.env.GOOGLE_SHEET_URL!);
+        const worksheetId = process.env.GOOGLE_SHEET_WORKSHEET || "0";
+
+        // 시트에 기록할 데이터 준비
+        const values = [
+            [
+                attendanceData.timestamp, // A열: 날짜/시간
+                attendanceData.userId, // B열: 사용자 ID
+                attendanceData.domainId, // C열: 도메인 ID
+                attendanceData.action, // D열: 액션 (출근/퇴근)
+                new Date().toLocaleString("ko-KR"), // E열: 한국 시간
+                "네이버웍스 봇", // F열: 출처
+            ],
+        ];
+
+        // Google Sheets API 호출
+        const response = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1:append?valueInputOption=RAW&key=${process.env.GOOGLE_API_KEY}`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    values: values,
+                }),
+            }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(
+                "Google Sheets API 오류:",
+                response.status,
+                errorText
+            );
+            throw new Error(`Google Sheets API 오류: ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log("구글 시트 기록 성공:", result);
+        return result;
+    } catch (error) {
+        console.error("구글 시트 저장 오류:", error);
+        throw error;
+    }
+}
+
 // 네이버웍스 웹훅 시그니처 검증
 function verifySignature(
     signature: string,
@@ -227,16 +289,47 @@ export async function POST(request: NextRequest) {
             // Persistent Menu 버튼 postback 처리
             else if (postback) {
                 if (postback === "CHECKIN_ACTION") {
-                    await sendMessage(
-                        userId,
-                        {
-                            content: {
-                                type: "text",
-                                text: "🟢 출근하기 버튼이 클릭되었습니다!\n(아직 실제 출근 처리는 구현되지 않았습니다)",
+                    try {
+                        // 구글 시트에 출근 기록 저장
+                        await saveToGoogleSheet({
+                            userId: userId,
+                            domainId: source.domainId,
+                            action: "출근",
+                            timestamp: data.issuedTime,
+                        });
+
+                        await sendMessage(
+                            userId,
+                            {
+                                content: {
+                                    type: "text",
+                                    text:
+                                        "🟢 출근이 완료되었습니다!\n\n📊 출근 정보:\n• 시간: " +
+                                        new Date(
+                                            data.issuedTime
+                                        ).toLocaleString("ko-KR") +
+                                        "\n• 사용자: " +
+                                        userId.substring(0, 8) +
+                                        "...\n• 도메인: " +
+                                        source.domainId +
+                                        "\n\n구글 시트에 기록되었습니다! ✅",
+                                },
                             },
-                        },
-                        channelId
-                    );
+                            channelId
+                        );
+                    } catch (error) {
+                        console.error("출근 처리 오류:", error);
+                        await sendMessage(
+                            userId,
+                            {
+                                content: {
+                                    type: "text",
+                                    text: "❌ 출근 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
+                                },
+                            },
+                            channelId
+                        );
+                    }
                 }
             }
         }
