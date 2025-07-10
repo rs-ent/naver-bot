@@ -100,10 +100,10 @@ export async function handleTextMessage(data: WebhookData): Promise<void> {
 export async function handleImageMessage(data: WebhookData): Promise<void> {
     const { source, content, issuedTime } = data;
     const { userId, channelId, domainId } = source;
-    const { resourceUrl } = content;
+    const { fileId } = content;
 
-    if (!resourceUrl) {
-        console.error("이미지 리소스 URL이 없습니다.");
+    if (!fileId) {
+        console.error("이미지 파일 ID가 없습니다.");
         await sendMessage(
             userId,
             {
@@ -118,10 +118,10 @@ export async function handleImageMessage(data: WebhookData): Promise<void> {
     }
 
     try {
-        console.log("이미지 메시지 처리 시작:", resourceUrl);
+        console.log("이미지 메시지 처리 시작:", fileId);
 
-        // 네이버웍스에서 이미지 다운로드
-        const imageBuffer = await downloadImage(resourceUrl);
+        // 네이버웍스에서 이미지 다운로드 (fileId 사용)
+        const imageBuffer = await downloadImage(fileId);
 
         // 이미지 유효성 검증
         if (!validateImageBuffer(imageBuffer)) {

@@ -211,24 +211,77 @@ export async function createPersistentMenu() {
     }
 }
 
-// 이미지 다운로드 함수
-export async function downloadImage(resourceUrl: string): Promise<Buffer> {
+// 파일 ID를 사용해서 콘텐츠 다운로드 (이미지, 파일, 오디오, 비디오)
+export async function downloadContent(fileId: string): Promise<Buffer> {
     try {
+        console.log(`콘텐츠 다운로드 시작: ${fileId}`);
+
         const accessToken = await getAccessToken();
 
-        const response = await fetch(resourceUrl, {
+        // 1단계: 네이버웍스 콘텐츠 다운로드 API에서 리다이렉트 URL 얻기
+        const downloadApiUrl = `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/attachments/${fileId}`;
+
+        console.log("1단계: 리다이렉트 URL 요청...");
+        const redirectResponse = await fetch(downloadApiUrl, {
+            method: "GET",
             headers: {
                 Authorization: `Bearer ${accessToken}`,
             },
+            redirect: "manual", // 자동 리다이렉트 비활성화 (중요!)
         });
 
-        if (!response.ok) {
-            throw new Error(`이미지 다운로드 실패: ${response.status}`);
+        // HTTP 302 응답에서 실제 파일 URL 추출
+        if (redirectResponse.status !== 302) {
+            const errorText = await redirectResponse.text();
+            console.error(
+                "리다이렉트 응답 오류:",
+                redirectResponse.status,
+                errorText
+            );
+            throw new Error(
+                `리다이렉트 응답 오류: ${redirectResponse.status} - ${errorText}`
+            );
         }
 
-        return Buffer.from(await response.arrayBuffer());
+        const actualFileUrl = redirectResponse.headers.get("location");
+        if (!actualFileUrl) {
+            throw new Error("Location 헤더에서 파일 URL을 찾을 수 없습니다.");
+        }
+
+        console.log(
+            "리다이렉트 URL 획득 성공:",
+            actualFileUrl.substring(0, 100) + "..."
+        );
+
+        // 2단계: 실제 파일 다운로드
+        console.log("2단계: 실제 파일 다운로드...");
+        const fileResponse = await fetch(actualFileUrl, {
+            method: "GET",
+        });
+
+        if (!fileResponse.ok) {
+            const errorText = await fileResponse.text();
+            console.error(
+                "파일 다운로드 실패:",
+                fileResponse.status,
+                errorText
+            );
+            throw new Error(
+                `파일 다운로드 실패: ${fileResponse.status} - ${errorText}`
+            );
+        }
+
+        const buffer = Buffer.from(await fileResponse.arrayBuffer());
+        console.log(`콘텐츠 다운로드 성공: ${buffer.length} bytes`);
+
+        return buffer;
     } catch (error) {
-        console.error("이미지 다운로드 오류:", error);
+        console.error("콘텐츠 다운로드 오류:", error);
         throw error;
     }
+}
+
+// 기존 함수명 유지 (하위 호환성)
+export async function downloadImage(fileId: string): Promise<Buffer> {
+    return downloadContent(fileId);
 }

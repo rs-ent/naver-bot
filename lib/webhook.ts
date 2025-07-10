@@ -31,7 +31,14 @@ export interface WebhookData {
         text?: string;
         postback?: string;
         type: string;
-        resourceUrl?: string;
+        fileId?: string; // 이미지, 파일, 오디오, 비디오 메시지의 리소스 ID
+        // 위치 정보 관련 필드들
+        address?: string;
+        latitude?: number;
+        longitude?: number;
+        // 스티커 관련 필드들
+        packageId?: string;
+        stickerId?: string;
     };
     issuedTime: string;
 }
@@ -124,7 +131,7 @@ export function logWebhookEvent(data: WebhookData): void {
         console.log("- 포스트백:", data.content.postback);
     }
 
-    if (data.content.resourceUrl) {
-        console.log("- 리소스 URL:", data.content.resourceUrl);
+    if (data.content.fileId) {
+        console.log("- 파일 ID:", data.content.fileId);
     }
 }
