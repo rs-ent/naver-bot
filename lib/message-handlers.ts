@@ -6,7 +6,11 @@ import {
     downloadImage,
 } from "./naver-works";
 import { saveToGoogleSheet, AttendanceData } from "./google-sheets";
-import { saveImageToBlob, validateImageBuffer } from "./image-processing";
+import {
+    saveImageToBlob,
+    validateImageBuffer,
+    extractImageMetadata,
+} from "./image-processing";
 
 // 텍스트 메시지 핸들러
 export async function handleTextMessage(data: WebhookData): Promise<void> {
@@ -61,6 +65,33 @@ export async function handleTextMessage(data: WebhookData): Promise<void> {
         return;
     }
 
+    // /help 명령어 처리 (도움말)
+    if (text === "/help") {
+        await sendMessage(
+            userId,
+            {
+                content: {
+                    type: "text",
+                    text:
+                        "🤖 네이버웍스 출근 봇 도움말\n\n" +
+                        "📝 사용 가능한 명령어:\n" +
+                        "• /test - 연결 테스트\n" +
+                        "• /menu - 출근하기 버튼 등록\n" +
+                        "• /help - 도움말 보기\n\n" +
+                        "📸 이미지 업로드:\n" +
+                        "• 채팅창에 이미지를 업로드하면 자동으로 압축하여 저장됩니다\n" +
+                        "• 이미지 링크가 제공되어 언제든지 확인할 수 있습니다\n\n" +
+                        "🟢 출근 기록:\n" +
+                        "• 하단의 '출근하기' 버튼을 눌러 출근을 기록할 수 있습니다\n" +
+                        "• 모든 기록은 구글 시트에 자동으로 저장됩니다\n\n" +
+                        "문의사항이 있으시면 관리자에게 문의해주세요! 😊",
+                },
+            },
+            channelId
+        );
+        return;
+    }
+
     // 기본 응답 (필요시 추가)
     console.log("처리되지 않은 텍스트 메시지:", text);
 }
@@ -97,6 +128,9 @@ export async function handleImageMessage(data: WebhookData): Promise<void> {
             throw new Error("유효하지 않은 이미지 파일입니다.");
         }
 
+        // 이미지 메타데이터 추출
+        const imageMetadata = await extractImageMetadata(imageBuffer);
+
         // Vercel Blob에 압축하여 저장
         const blobUrl = await saveImageToBlob(imageBuffer, userId, issuedTime);
 
@@ -115,7 +149,7 @@ export async function handleImageMessage(data: WebhookData): Promise<void> {
 
         await saveToGoogleSheet(attendanceData);
 
-        // 사용자에게 완료 메시지 전송
+        // 사용자에게 완료 메시지 전송 (이미지 URL 콜백 포함)
         await sendMessage(
             userId,
             {
@@ -125,16 +159,76 @@ export async function handleImageMessage(data: WebhookData): Promise<void> {
                         `📸 이미지가 성공적으로 업로드되었습니다!\n\n` +
                         `👤 업로드 정보:\n` +
                         `• 시간: ${new Date(issuedTime).toLocaleString(
-                            "ko-KR"
+                            "ko-KR",
+                            { timeZone: "Asia/Seoul" }
                         )}\n` +
                         `• 이름: ${userInfo.name}\n` +
-                        `• 부서: ${userInfo.department}\n` +
-                        `• 압축된 이미지: ${blobUrl}\n\n` +
+                        `• 부서: ${userInfo.department}\n\n` +
+                        `📊 이미지 정보:\n` +
+                        `• 크기: ${imageMetadata.width}x${imageMetadata.height}\n` +
+                        `• 형식: ${imageMetadata.format.toUpperCase()}\n` +
+                        `• 파일 크기: ${Math.round(
+                            imageMetadata.size / 1024
+                        )}KB\n\n` +
+                        `🔗 이미지 링크: ${blobUrl}\n\n` +
                         `구글 시트에 기록되었습니다! ✅`,
                 },
             },
             channelId
         );
+
+        // 추가: 이미지 접근 버튼을 포함한 별도 메시지
+        await sendMessage(
+            userId,
+            {
+                content: {
+                    type: "template",
+                    altText: "이미지 업로드 완료 - 이미지 확인하기",
+                    template: {
+                        type: "button_template",
+                        text: `📷 업로드된 이미지 (${imageMetadata.width}x${
+                            imageMetadata.height
+                        }, ${Math.round(imageMetadata.size / 1024)}KB)`,
+                        actions: [
+                            {
+                                type: "uri",
+                                label: "🖼️ 이미지 보기",
+                                uri: blobUrl,
+                            },
+                            {
+                                type: "uri",
+                                label: "⬇️ 다운로드",
+                                uri: blobUrl,
+                            },
+                            {
+                                type: "message",
+                                label: "🔗 링크 복사",
+                                text: `이미지 링크: ${blobUrl}`,
+                            },
+                        ],
+                    },
+                },
+            },
+            channelId
+        );
+
+        // 추가: 이미지 미리보기 메시지 (네이버웍스에서 지원하는 경우)
+        try {
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "image",
+                        resourceUrl: blobUrl,
+                        altText: `업로드된 이미지 (${userInfo.name})`,
+                    },
+                },
+                channelId
+            );
+        } catch (previewError) {
+            console.warn("이미지 미리보기 전송 실패:", previewError);
+            // 미리보기 실패 시 무시하고 계속 진행
+        }
     } catch (error) {
         console.error("이미지 처리 오류:", error);
         await sendMessage(
@@ -191,14 +285,6 @@ export async function handlePostbackMessage(data: WebhookData): Promise<void> {
                             userInfo.email +
                             "\n• 부서: " +
                             userInfo.department +
-                            "\n• 직급: " +
-                            userInfo.level +
-                            "\n• 직책: " +
-                            userInfo.position +
-                            "\n• 사번: " +
-                            userInfo.employeeNumber +
-                            "\n• 도메인: " +
-                            domainId +
                             "\n\n구글 시트에 기록되었습니다! ✅",
                     },
                 },
