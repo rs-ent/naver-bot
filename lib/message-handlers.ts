@@ -182,7 +182,9 @@ export async function handlePostbackMessage(data: WebhookData): Promise<void> {
                         type: "text",
                         text:
                             "🟢 출근이 완료되었습니다!\n\n📊 출근 정보:\n• 시간: " +
-                            new Date(issuedTime).toLocaleString("ko-KR") +
+                            new Date(issuedTime).toLocaleString("ko-KR", {
+                                timeZone: "Asia/Seoul",
+                            }) +
                             "\n• 이름: " +
                             userInfo.name +
                             "\n• 이메일: " +
