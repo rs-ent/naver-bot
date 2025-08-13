@@ -12,6 +12,33 @@ import {
     extractImageMetadata,
 } from "./image-processing";
 
+const userLastCheckinTime = new Map<string, number>();
+
+function checkCooldown(
+    userId: string,
+    cooldownPeriodMs: number = 30000
+): {
+    isInCooldown: boolean;
+    remainingSeconds: number;
+} {
+    const currentTime = Date.now();
+    const lastCheckinTime = userLastCheckinTime.get(userId) || 0;
+    const timeDiff = currentTime - lastCheckinTime;
+
+    if (timeDiff < cooldownPeriodMs) {
+        const remainingSeconds = Math.ceil(
+            (cooldownPeriodMs - timeDiff) / 1000
+        );
+        return { isInCooldown: true, remainingSeconds };
+    }
+
+    return { isInCooldown: false, remainingSeconds: 0 };
+}
+
+function updateLastCheckinTime(userId: string): void {
+    userLastCheckinTime.set(userId, Date.now());
+}
+
 // 텍스트 메시지 핸들러
 export async function handleTextMessage(data: WebhookData): Promise<void> {
     const { source, content } = data;
@@ -255,10 +282,26 @@ export async function handlePostbackMessage(data: WebhookData): Promise<void> {
     // 출근 버튼 처리
     if (postback === "CHECKIN_ACTION") {
         try {
-            // 사용자 정보 조회
+            const cooldownCheck = checkCooldown(userId);
+
+            if (cooldownCheck.isInCooldown) {
+                await sendMessage(
+                    userId,
+                    {
+                        content: {
+                            type: "text",
+                            text: `⏰ 잠시 후 다시 눌러주세요.\n${cooldownCheck.remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
+                        },
+                    },
+                    channelId
+                );
+                return;
+            }
+
+            updateLastCheckinTime(userId);
+
             const userInfo = await getUserInfo(userId);
 
-            // 구글 시트에 출근 기록 저장
             const attendanceData: AttendanceData = {
                 userId,
                 domainId,

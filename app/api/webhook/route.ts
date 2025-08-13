@@ -11,8 +11,6 @@ import {
 } from "@/lib/webhook";
 import { routeMessage } from "@/lib/message-handlers";
 
-const userLastCheckinTime = new Map<string, number>();
-
 function extractSheetId(url: string | undefined): string {
     if (!url) {
         console.error("GOOGLE_SHEET_URL 환경 변수가 설정되지 않았습니다.");
