@@ -1,4 +1,4 @@
-import { WebhookData } from "./webhook";
+import { WebhookData, RequestInfo, detectDeviceType } from "./webhook";
 import {
     getUserInfo,
     sendMessage,
@@ -124,7 +124,10 @@ export async function handleTextMessage(data: WebhookData): Promise<void> {
 }
 
 // 이미지 메시지 핸들러
-export async function handleImageMessage(data: WebhookData): Promise<void> {
+export async function handleImageMessage(
+    data: WebhookData,
+    requestInfo?: RequestInfo
+): Promise<void> {
     const { source, content, issuedTime } = data;
     const { userId, channelId, domainId } = source;
     const { fileId } = content;
@@ -172,6 +175,7 @@ export async function handleImageMessage(data: WebhookData): Promise<void> {
             timestamp: issuedTime,
             imageUrl: blobUrl,
             userInfo,
+            requestInfo,
         };
 
         await saveToGoogleSheet(attendanceData);
@@ -272,7 +276,10 @@ export async function handleImageMessage(data: WebhookData): Promise<void> {
 }
 
 // 포스트백 메시지 핸들러
-export async function handlePostbackMessage(data: WebhookData): Promise<void> {
+export async function handlePostbackMessage(
+    data: WebhookData,
+    requestInfo?: RequestInfo
+): Promise<void> {
     const { source, content, issuedTime } = data;
     const { userId, channelId, domainId } = source;
     const { postback } = content;
@@ -308,27 +315,49 @@ export async function handlePostbackMessage(data: WebhookData): Promise<void> {
                 action: "출근",
                 timestamp: issuedTime,
                 userInfo,
+                requestInfo,
             };
 
             await saveToGoogleSheet(attendanceData);
+
+            // 디바이스 타입 체크
+            const deviceCheck = requestInfo
+                ? detectDeviceType(requestInfo.userAgent)
+                : null;
+            const isNonDesktop = deviceCheck && !deviceCheck.isDesktop;
+
+            let responseText =
+                "🟢 출근이 완료되었습니다!\n\n📊 출근 정보:\n• 시간: " +
+                new Date(issuedTime).toLocaleString("ko-KR", {
+                    timeZone: "Asia/Seoul",
+                }) +
+                "\n• 이름: " +
+                userInfo.name +
+                "\n• 이메일: " +
+                userInfo.email +
+                "\n• 부서: " +
+                userInfo.department;
+
+            if (deviceCheck) {
+                responseText += "\n• 디바이스: " + deviceCheck.deviceInfo;
+            }
+
+            responseText += "\n\n구글 시트에 기록되었습니다! ✅";
+
+            // 데스크톱이 아닌 디바이스에서 접속한 경우 경고 메시지 추가
+            if (isNonDesktop) {
+                responseText +=
+                    "\n\n⚠️ 경고: 모바일/태블릿에서 출근 등록됨\n" +
+                    "📋 정확한 출근 관리를 위해서는 데스크톱(PC)에서 출근 등록을 해주세요.\n" +
+                    "👨‍💼 이 건에 대해서는 관리자와 상의하시기 바랍니다.";
+            }
 
             await sendMessage(
                 userId,
                 {
                     content: {
                         type: "text",
-                        text:
-                            "🟢 출근이 완료되었습니다!\n\n📊 출근 정보:\n• 시간: " +
-                            new Date(issuedTime).toLocaleString("ko-KR", {
-                                timeZone: "Asia/Seoul",
-                            }) +
-                            "\n• 이름: " +
-                            userInfo.name +
-                            "\n• 이메일: " +
-                            userInfo.email +
-                            "\n• 부서: " +
-                            userInfo.department +
-                            "\n\n구글 시트에 기록되었습니다! ✅",
+                        text: responseText,
                     },
                 },
                 channelId
@@ -354,7 +383,10 @@ export async function handlePostbackMessage(data: WebhookData): Promise<void> {
 }
 
 // 메시지 라우터 - 메시지 타입에 따라 적절한 핸들러 호출
-export async function routeMessage(data: WebhookData): Promise<void> {
+export async function routeMessage(
+    data: WebhookData,
+    requestInfo?: RequestInfo
+): Promise<void> {
     const { type, content } = data;
 
     // 메시지 타입이 아닌 경우 무시
@@ -368,7 +400,7 @@ export async function routeMessage(data: WebhookData): Promise<void> {
     try {
         // 포스트백 메시지 처리
         if (postback) {
-            await handlePostbackMessage(data);
+            await handlePostbackMessage(data, requestInfo);
             return;
         }
 
@@ -380,7 +412,7 @@ export async function routeMessage(data: WebhookData): Promise<void> {
                 }
                 break;
             case "image":
-                await handleImageMessage(data);
+                await handleImageMessage(data, requestInfo);
                 break;
             default:
                 console.log("지원하지 않는 콘텐츠 타입:", contentType);

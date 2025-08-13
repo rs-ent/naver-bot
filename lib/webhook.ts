@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { NextRequest } from "next/server";
 
 // 네이버웍스 웹훅 시그니처 검증
 export function verifySignature(
@@ -113,8 +114,119 @@ export function extractWebhookHeaders(headers: Headers): {
     }
 }
 
+// 요청 정보 타입 정의
+export interface RequestInfo {
+    ip: string;
+    userAgent: string;
+    country?: string;
+    city?: string;
+    timestamp: string;
+    headers: Record<string, string>;
+}
+
+// 디바이스 타입 감지
+export function detectDeviceType(userAgent: string): {
+    type: "desktop" | "mobile" | "tablet" | "unknown";
+    isDesktop: boolean;
+    deviceInfo: string;
+} {
+    const ua = userAgent.toLowerCase();
+
+    // 모바일 디바이스 패턴
+    const mobilePatterns = [
+        /android/i,
+        /iphone/i,
+        /ipod/i,
+        /blackberry/i,
+        /windows phone/i,
+        /mobile/i,
+    ];
+
+    // 태블릿 디바이스 패턴
+    const tabletPatterns = [/ipad/i, /android(?!.*mobile)/i, /tablet/i];
+
+    // 데스크톱 OS 패턴
+    const desktopPatterns = [
+        /windows nt/i,
+        /macintosh/i,
+        /mac os x/i,
+        /linux/i,
+        /x11/i,
+    ];
+
+    let deviceInfo = "";
+    let type: "desktop" | "mobile" | "tablet" | "unknown" = "unknown";
+
+    // 태블릿 체크 (모바일보다 먼저 체크)
+    if (tabletPatterns.some((pattern) => pattern.test(ua))) {
+        type = "tablet";
+        if (/ipad/i.test(ua)) deviceInfo = "iPad";
+        else if (/android/i.test(ua)) deviceInfo = "Android Tablet";
+        else deviceInfo = "Tablet";
+    }
+    // 모바일 체크
+    else if (mobilePatterns.some((pattern) => pattern.test(ua))) {
+        type = "mobile";
+        if (/iphone/i.test(ua)) deviceInfo = "iPhone";
+        else if (/android/i.test(ua)) deviceInfo = "Android Phone";
+        else if (/blackberry/i.test(ua)) deviceInfo = "BlackBerry";
+        else if (/windows phone/i.test(ua)) deviceInfo = "Windows Phone";
+        else deviceInfo = "Mobile Device";
+    }
+    // 데스크톱 체크
+    else if (desktopPatterns.some((pattern) => pattern.test(ua))) {
+        type = "desktop";
+        if (/windows nt/i.test(ua)) deviceInfo = "Windows PC";
+        else if (/macintosh|mac os x/i.test(ua)) deviceInfo = "Mac";
+        else if (/linux/i.test(ua)) deviceInfo = "Linux PC";
+        else deviceInfo = "Desktop";
+    }
+
+    return {
+        type,
+        isDesktop: type === "desktop",
+        deviceInfo,
+    };
+}
+
+// 요청 정보 추출
+export function extractRequestInfo(request: NextRequest): RequestInfo {
+    const headers = Object.fromEntries(request.headers.entries());
+
+    const ip =
+        headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+        headers["x-real-ip"] ||
+        headers["cf-connecting-ip"] ||
+        headers["x-client-ip"] ||
+        "unknown";
+
+    const userAgent = headers["user-agent"] || "unknown";
+
+    const country = headers["cf-ipcountry"] || headers["x-vercel-ip-country"];
+    const city = headers["x-vercel-ip-city"];
+
+    return {
+        ip,
+        userAgent,
+        country,
+        city,
+        timestamp: new Date().toISOString(),
+        headers: {
+            "x-forwarded-for": headers["x-forwarded-for"] || "",
+            "user-agent": userAgent,
+            "accept-language": headers["accept-language"] || "",
+            "cf-ipcountry": headers["cf-ipcountry"] || "",
+            "x-vercel-ip-country": headers["x-vercel-ip-country"] || "",
+            "x-vercel-ip-city": headers["x-vercel-ip-city"] || "",
+        },
+    };
+}
+
 // 웹훅 로깅 도우미
-export function logWebhookEvent(data: WebhookData): void {
+export function logWebhookEvent(
+    data: WebhookData,
+    requestInfo?: RequestInfo
+): void {
     console.log("=== 웹훅 이벤트 수신 ===");
     console.log("- 타입:", data.type);
     console.log("- 사용자 ID:", data.source.userId);
@@ -122,6 +234,18 @@ export function logWebhookEvent(data: WebhookData): void {
     console.log("- 도메인 ID:", data.source.domainId);
     console.log("- 콘텐츠 타입:", data.content.type);
     console.log("- 시간:", data.issuedTime);
+
+    if (requestInfo) {
+        console.log("=== 요청 정보 ===");
+        console.log("- IP 주소:", requestInfo.ip);
+        console.log("- User Agent:", requestInfo.userAgent);
+        if (requestInfo.country) {
+            console.log("- 국가:", requestInfo.country);
+        }
+        if (requestInfo.city) {
+            console.log("- 도시:", requestInfo.city);
+        }
+    }
 
     if (data.content.text) {
         console.log("- 텍스트:", data.content.text);

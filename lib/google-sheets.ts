@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { RequestInfo } from "./webhook";
 
 // 구글 시트 ID 추출 함수
 export function extractSheetId(url: string | undefined): string {
@@ -206,7 +207,7 @@ export async function ensureHeaderExists(
         const checkResponse = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A1:L1`,
+            )}!A1:P1`,
             {
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -230,7 +231,7 @@ export async function ensureHeaderExists(
                 const headerResponse = await fetch(
                     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                         sheetName
-                    )}!A1:L1?valueInputOption=RAW`,
+                    )}!A1:P1?valueInputOption=RAW`,
                     {
                         method: "PUT",
                         headers: {
@@ -240,18 +241,22 @@ export async function ensureHeaderExists(
                         body: JSON.stringify({
                             values: [
                                 [
-                                    "타임스탬프", // A열
-                                    "한국시간", // B열
-                                    "이름", // C열
-                                    "이메일", // D열
-                                    "부서", // E열
-                                    "직급", // F열
-                                    "직책", // G열
-                                    "사번", // H열
-                                    "액션", // I열
-                                    "도메인ID", // J열
-                                    "출처", // K열
-                                    "이미지URL", // L열
+                                    "타임스탬프",
+                                    "한국시간",
+                                    "이름",
+                                    "이메일",
+                                    "부서",
+                                    "직급",
+                                    "직책",
+                                    "사번",
+                                    "액션",
+                                    "도메인ID",
+                                    "출처",
+                                    "이미지URL",
+                                    "IP주소",
+                                    "User Agent",
+                                    "국가",
+                                    "도시",
                                 ],
                             ],
                         }),
@@ -289,6 +294,7 @@ export interface AttendanceData {
         position: string;
         employeeNumber: string;
     };
+    requestInfo?: RequestInfo;
 }
 
 // 구글 시트에 출근 기록 저장
@@ -320,18 +326,22 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
         // 시트에 기록할 데이터 준비
         const values = [
             [
-                timestamp.toISOString(), // A열: UTC ISO 타임스탬프 (원본 보존)
-                timestamp.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }), // B열: 한국 시간
-                userInfo.name, // C열: 사용자 이름
-                userInfo.email, // D열: 이메일
-                userInfo.department, // E열: 부서
-                userInfo.level, // F열: 직급
-                userInfo.position, // G열: 직책
-                userInfo.employeeNumber, // H열: 사번
-                attendanceData.action, // I열: 액션 (출근/퇴근/이미지업로드)
-                attendanceData.domainId, // J열: 도메인 ID
-                "네이버웍스 봇", // K열: 출처
-                attendanceData.imageUrl || "", // L열: 이미지 URL (없으면 빈 문자열)
+                timestamp.toISOString(),
+                timestamp.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }),
+                userInfo.name,
+                userInfo.email,
+                userInfo.department,
+                userInfo.level,
+                userInfo.position,
+                userInfo.employeeNumber,
+                attendanceData.action,
+                attendanceData.domainId,
+                "네이버웍스 봇",
+                attendanceData.imageUrl || "",
+                attendanceData.requestInfo?.ip || "",
+                attendanceData.requestInfo?.userAgent || "",
+                attendanceData.requestInfo?.country || "",
+                attendanceData.requestInfo?.city || "",
             ],
         ];
 

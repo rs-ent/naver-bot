@@ -8,6 +8,7 @@ import {
     validateWebhookData,
     extractWebhookHeaders,
     logWebhookEvent,
+    extractRequestInfo,
 } from "@/lib/webhook";
 import { routeMessage } from "@/lib/message-handlers";
 
@@ -622,10 +623,13 @@ export async function POST(request: NextRequest) {
     try {
         const body = await request.text();
         const { signature, isValid } = extractWebhookHeaders(request.headers);
+        const requestInfo = extractRequestInfo(request);
 
         console.log("=== 웹훅 수신 시작 ===");
         console.log("Body 길이:", body.length);
         console.log("Signature 존재 여부:", isValid);
+        console.log("요청 IP:", requestInfo.ip);
+        console.log("User Agent:", requestInfo.userAgent);
 
         if (
             !isValid ||
@@ -663,9 +667,9 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        logWebhookEvent(data);
+        logWebhookEvent(data, requestInfo);
 
-        await routeMessage(data);
+        await routeMessage(data, requestInfo);
 
         console.log("=== 웹훅 처리 완료 ===");
         return NextResponse.json({ success: true });
