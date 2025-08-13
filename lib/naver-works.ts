@@ -142,7 +142,12 @@ export async function sendMessage(
 // Persistent Menu 등록 함수
 export async function createPersistentMenu() {
     try {
+        console.log("=== Persistent Menu 등록 시작 ===");
+        console.log("API URL:", process.env.NAVER_WORKS_API_URL);
+        console.log("Bot ID:", process.env.NAVER_WORKS_BOT_ID);
+
         const accessToken = await getAccessToken();
+        console.log("Access Token 획득 성공");
 
         const menuData = {
             content: {
@@ -161,6 +166,8 @@ export async function createPersistentMenu() {
             },
         };
 
+        console.log("메뉴 데이터:", JSON.stringify(menuData, null, 2));
+
         const response = await fetch(
             `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/persistentmenu`,
             {
@@ -171,6 +178,12 @@ export async function createPersistentMenu() {
                 },
                 body: JSON.stringify(menuData),
             }
+        );
+
+        console.log("API 응답 상태:", response.status);
+        console.log(
+            "API 응답 헤더:",
+            Object.fromEntries(response.headers.entries())
         );
 
         if (!response.ok) {
