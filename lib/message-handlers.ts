@@ -388,36 +388,19 @@ export async function handleImageMessage(
             channelId
         );
 
-        // 추가: 이미지 접근 버튼을 포함한 별도 메시지
+        // 추가: 이미지 링크 제공 (텍스트 메시지)
+        const imageLinks =
+            `📷 업로드된 이미지 (${imageMetadata.width}x${
+                imageMetadata.height
+            }, ${Math.round(imageMetadata.size / 1024)}KB)\n\n` +
+            `🖼️ 이미지 보기/다운로드:\n${blobUrl}`;
+
         await sendMessage(
             userId,
             {
                 content: {
-                    type: "template",
-                    altText: "이미지 업로드 완료 - 이미지 확인하기",
-                    template: {
-                        type: "button_template",
-                        text: `📷 업로드된 이미지 (${imageMetadata.width}x${
-                            imageMetadata.height
-                        }, ${Math.round(imageMetadata.size / 1024)}KB)`,
-                        actions: [
-                            {
-                                type: "uri",
-                                label: "🖼️ 이미지 보기",
-                                uri: blobUrl,
-                            },
-                            {
-                                type: "uri",
-                                label: "⬇️ 다운로드",
-                                uri: blobUrl,
-                            },
-                            {
-                                type: "message",
-                                label: "🔗 링크 복사",
-                                text: `이미지 링크: ${blobUrl}`,
-                            },
-                        ],
-                    },
+                    type: "text",
+                    text: imageLinks,
                 },
             },
             channelId
@@ -557,35 +540,20 @@ export async function handleLocationMessage(
             channelId
         );
 
-        // 추가: 위치 정보를 지도로 보여주는 버튼 메시지
+        // 추가: 위치 정보 링크 제공 (텍스트 메시지)
         if (latitude && longitude) {
+            const mapLinks =
+                `🗺️ 지도에서 확인하기:\n\n` +
+                `📍 구글 지도: https://maps.google.com/?q=${latitude},${longitude}\n` +
+                `🧭 네이버 지도: https://map.naver.com/v5/search/${latitude},${longitude}\n\n` +
+                `📋 좌표: ${latitude}, ${longitude}`;
+
             await sendMessage(
                 userId,
                 {
                     content: {
-                        type: "template",
-                        altText: "위치 정보 - 지도에서 보기",
-                        template: {
-                            type: "button_template",
-                            text: `📍 ${address || "전송된 위치"}`,
-                            actions: [
-                                {
-                                    type: "uri",
-                                    label: "🗺️ 구글 지도에서 보기",
-                                    uri: `https://maps.google.com/?q=${latitude},${longitude}`,
-                                },
-                                {
-                                    type: "uri",
-                                    label: "🧭 네이버 지도에서 보기",
-                                    uri: `https://map.naver.com/v5/search/${latitude},${longitude}`,
-                                },
-                                {
-                                    type: "message",
-                                    label: "📋 좌표 복사",
-                                    text: `위치 좌표: ${latitude}, ${longitude}`,
-                                },
-                            ],
-                        },
+                        type: "text",
+                        text: mapLinks,
                     },
                 },
                 channelId
