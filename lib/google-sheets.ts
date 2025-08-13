@@ -207,7 +207,7 @@ export async function ensureHeaderExists(
         const checkResponse = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A1:P1`,
+            )}!A1:S1`,
             {
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -231,7 +231,7 @@ export async function ensureHeaderExists(
                 const headerResponse = await fetch(
                     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                         sheetName
-                    )}!A1:P1?valueInputOption=RAW`,
+                    )}!A1:S1?valueInputOption=RAW`,
                     {
                         method: "PUT",
                         headers: {
@@ -257,6 +257,9 @@ export async function ensureHeaderExists(
                                     "User Agent",
                                     "국가",
                                     "도시",
+                                    "출근주소",
+                                    "위도",
+                                    "경도",
                                 ],
                             ],
                         }),
@@ -295,6 +298,11 @@ export interface AttendanceData {
         employeeNumber: string;
     };
     requestInfo?: RequestInfo;
+    locationInfo?: {
+        address?: string;
+        latitude?: number;
+        longitude?: number;
+    };
 }
 
 // 구글 시트에 출근 기록 저장
@@ -342,6 +350,9 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
                 attendanceData.requestInfo?.userAgent || "",
                 attendanceData.requestInfo?.country || "",
                 attendanceData.requestInfo?.city || "",
+                attendanceData.locationInfo?.address || "",
+                attendanceData.locationInfo?.latitude || "",
+                attendanceData.locationInfo?.longitude || "",
             ],
         ];
 

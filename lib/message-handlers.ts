@@ -295,43 +295,42 @@ export async function handleLocationMessage(
         // 사용자 정보 조회
         const userInfo = await getUserInfo(userId);
 
-        // 구글 시트에 위치 기록 저장
+        // 구글 시트에 위치 기반 출근 기록 저장
         const attendanceData: AttendanceData = {
             userId,
             domainId,
-            action: "위치전송",
+            action: "위치출근",
             timestamp: issuedTime,
             userInfo,
             requestInfo,
+            locationInfo: {
+                address,
+                latitude,
+                longitude,
+            },
         };
 
         await saveToGoogleSheet(attendanceData);
 
-        // 위치 정보 응답 메시지
+        // 위치 기반 출근 완료 메시지
         let responseText =
-            "📍 위치 정보가 수신되었습니다!\n\n" +
-            "📊 위치 정보:\n" +
+            "🟢 출근이 완료되었습니다!\n\n" +
+            "📊 출근 정보:\n" +
             `• 시간: ${new Date(issuedTime).toLocaleString("ko-KR", {
                 timeZone: "Asia/Seoul",
             })}\n` +
             `• 이름: ${userInfo.name}\n` +
+            `• 이메일: ${userInfo.email}\n` +
             `• 부서: ${userInfo.department}`;
 
         if (address) {
-            responseText += `\n• 주소: ${address}`;
+            responseText += `\n• 출근 위치: ${address}`;
         }
 
         if (latitude && longitude) {
             responseText += `\n• 좌표: ${latitude.toFixed(
                 6
             )}, ${longitude.toFixed(6)}`;
-            responseText += `\n• 지도: https://maps.google.com/?q=${latitude},${longitude}`;
-        }
-
-        // 디바이스 정보 추가
-        if (requestInfo) {
-            const deviceCheck = detectDeviceType(requestInfo.userAgent);
-            responseText += `\n• 디바이스: ${deviceCheck.deviceInfo}`;
         }
 
         responseText += "\n\n구글 시트에 기록되었습니다! ✅";
@@ -407,8 +406,8 @@ export async function handlePostbackMessage(
 
     console.log(`포스트백 메시지 처리: ${postback}`);
 
-    // 출근 버튼 처리
-    if (postback === "CHECKIN_ACTION") {
+    // 일반 출근 버튼 처리 (기존 버튼은 더 이상 사용되지 않음)
+    if (postback === "CHECKIN_ACTION" || postback === "CHECKIN_SIMPLE") {
         try {
             const cooldownCheck = checkCooldown(userId);
 
@@ -471,6 +470,11 @@ export async function handlePostbackMessage(
             }
 
             responseText += "\n\n구글 시트에 기록되었습니다! ✅";
+
+            // 위치 정보 권장 안내
+            responseText +=
+                "\n\n📍 다음번에는 '출근하기' 버튼을 눌러 위치 정보와 함께 출근해주세요!\n" +
+                "위치 정보가 있으면 관리자가 출근 위치를 확인할 수 있습니다.";
 
             // 필요한 경우에만 간단한 안내 메시지
             if (sourceAnalysis?.riskLevel === "high") {

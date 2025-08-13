@@ -148,20 +148,12 @@ export async function createPersistentMenu() {
             content: {
                 actions: [
                     {
-                        type: "message",
+                        type: "location",
                         label: "출근하기",
-                        text: "출근하기",
-                        postback: "CHECKIN_ACTION",
                         i18nLabels: [
                             {
                                 language: "ko_KR",
                                 label: "출근하기",
-                            },
-                        ],
-                        i18nTexts: [
-                            {
-                                language: "ko_KR",
-                                text: "출근하기",
                             },
                         ],
                     },
