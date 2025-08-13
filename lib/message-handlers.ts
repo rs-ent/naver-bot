@@ -46,7 +46,10 @@ function updateLastCheckinTime(userId: string): void {
 }
 
 // 텍스트 메시지 핸들러
-export async function handleTextMessage(data: WebhookData): Promise<void> {
+export async function handleTextMessage(
+    data: WebhookData,
+    requestInfo?: RequestInfo
+): Promise<void> {
     const { source, content } = data;
     const { userId, channelId, domainId } = source;
     const { text } = content;
@@ -157,6 +160,138 @@ export async function handleTextMessage(data: WebhookData): Promise<void> {
             },
             channelId
         );
+        return;
+    }
+
+    // CHECKIN_LOCATION 메시지 처리 (Persistent Menu에서 온 요청)
+    if (text === "CHECKIN_LOCATION") {
+        await sendMessage(
+            userId,
+            {
+                content: {
+                    type: "text",
+                    text: "📍 위치 정보와 함께 출근을 기록하시겠습니까?\n\n아래 버튼을 눌러 현재 위치를 공유해주세요:",
+                    quickReply: {
+                        buttonList: [
+                            {
+                                type: "location",
+                                title: "📍 현재 위치로 출근하기",
+                            },
+                            {
+                                type: "message",
+                                title: "🏢 위치 없이 출근하기",
+                                value: "CHECKIN_SIMPLE",
+                            },
+                        ],
+                    },
+                },
+            },
+            channelId
+        );
+        return;
+    }
+
+    // CHECKIN_SIMPLE 메시지 처리 (위치 없이 출근)
+    if (text === "CHECKIN_SIMPLE") {
+        try {
+            const cooldownCheck = checkCooldown(userId);
+
+            if (cooldownCheck.isInCooldown) {
+                await sendMessage(
+                    userId,
+                    {
+                        content: {
+                            type: "text",
+                            text: `⏰ 잠시 후 다시 눌러주세요.\n${cooldownCheck.remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
+                        },
+                    },
+                    channelId
+                );
+                return;
+            }
+
+            updateLastCheckinTime(userId);
+
+            const userInfo = await getUserInfo(userId);
+
+            const attendanceData: AttendanceData = {
+                userId,
+                domainId,
+                action: "출근",
+                timestamp: data.issuedTime,
+                userInfo,
+                requestInfo: requestInfo,
+            };
+
+            await saveToGoogleSheet(attendanceData);
+
+            // 요청 소스 분석
+            const sourceAnalysis = requestInfo
+                ? analyzeRequestSource(requestInfo)
+                : null;
+
+            let responseText =
+                "🟢 출근이 완료되었습니다!\n\n📊 출근 정보:\n• 시간: " +
+                new Date(data.issuedTime).toLocaleString("ko-KR", {
+                    timeZone: "Asia/Seoul",
+                }) +
+                "\n• 이름: " +
+                userInfo.name +
+                "\n• 이메일: " +
+                userInfo.email +
+                "\n• 부서: " +
+                userInfo.department;
+
+            // 필요한 경우에만 지역 정보 표시
+            if (requestInfo && sourceAnalysis) {
+                if (
+                    requestInfo.country &&
+                    requestInfo.country !== "KR" &&
+                    requestInfo.country !== "Korea"
+                ) {
+                    responseText += `\n• 접속 지역: ${sourceAnalysis.locationInfo}`;
+                }
+            }
+
+            responseText += "\n\n구글 시트에 기록되었습니다! ✅";
+
+            // 위치 정보 권장 안내
+            responseText +=
+                "\n\n📍 다음번에는 위치 정보와 함께 출근해보세요!\n" +
+                "위치 정보가 있으면 관리자가 출근 위치를 확인할 수 있습니다.";
+
+            // 필요한 경우에만 간단한 안내 메시지
+            if (sourceAnalysis?.riskLevel === "high") {
+                responseText +=
+                    "\n\n🚨 해외 접속이 감지되었습니다. 관리자와 상의해주세요.";
+            } else if (sourceAnalysis?.riskLevel === "medium") {
+                responseText +=
+                    "\n\n📱 모바일에서 출근하신 경우 관리자와 상의해주세요.";
+            }
+
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: responseText,
+                    },
+                },
+                channelId
+            );
+        } catch (error) {
+            console.error("출근 처리 오류:", error);
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: "❌ 출근 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
+                    },
+                },
+                channelId
+            );
+        }
         return;
     }
 

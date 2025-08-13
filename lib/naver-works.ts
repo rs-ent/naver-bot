@@ -142,19 +142,15 @@ export async function sendMessage(
 // Persistent Menu 등록 함수
 export async function createPersistentMenu() {
     try {
-        console.log("=== Persistent Menu 등록 시작 ===");
-        console.log("API URL:", process.env.NAVER_WORKS_API_URL);
-        console.log("Bot ID:", process.env.NAVER_WORKS_BOT_ID);
-
         const accessToken = await getAccessToken();
-        console.log("Access Token 획득 성공");
 
         const menuData = {
             content: {
                 actions: [
                     {
-                        type: "location",
+                        type: "message",
                         label: "출근하기",
+                        text: "CHECKIN_LOCATION",
                         i18nLabels: [
                             {
                                 language: "ko_KR",
@@ -165,8 +161,6 @@ export async function createPersistentMenu() {
                 ],
             },
         };
-
-        console.log("메뉴 데이터:", JSON.stringify(menuData, null, 2));
 
         const response = await fetch(
             `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/persistentmenu`,
