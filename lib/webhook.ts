@@ -124,6 +124,82 @@ export interface RequestInfo {
     headers: Record<string, string>;
 }
 
+// IP 기반 추가 정보 추출 (향후 확장 가능)
+export function analyzeRequestSource(requestInfo: RequestInfo): {
+    isLikelyMobile: boolean;
+    isLikelyOffice: boolean;
+    locationInfo: string;
+    riskLevel: "low" | "medium" | "high";
+    recommendations: string[];
+} {
+    const recommendations: string[] = [];
+    let isLikelyMobile = false;
+    let isLikelyOffice = false;
+    let riskLevel: "low" | "medium" | "high" = "low";
+
+    // User-Agent 기반 분석
+    const deviceCheck = detectDeviceType(requestInfo.userAgent);
+    if (!deviceCheck.isDesktop) {
+        isLikelyMobile = true;
+        riskLevel = "medium";
+        recommendations.push("데스크톱에서 출근 등록을 권장합니다");
+    }
+
+    // IP 주소 패턴 분석 (일반적인 패턴들)
+    const ip = requestInfo.ip;
+    if (ip !== "unknown") {
+        // 사설 IP 대역 체크
+        if (
+            ip.startsWith("192.168.") ||
+            ip.startsWith("10.") ||
+            ip.startsWith("172.")
+        ) {
+            isLikelyOffice = true;
+            recommendations.push("사내 네트워크에서 접속 중입니다");
+        }
+        // 모바일 통신사 IP 패턴 (한국 기준 예시)
+        else if (ip.includes("mobile") || ip.includes("lte")) {
+            isLikelyMobile = true;
+            riskLevel = "high";
+            recommendations.push("모바일 네트워크에서 접속한 것으로 보입니다");
+        }
+    }
+
+    // 지리적 위치 정보
+    let locationInfo = "위치 정보 없음";
+    if (requestInfo.country) {
+        locationInfo = requestInfo.country;
+        if (requestInfo.city) {
+            locationInfo += ` (${requestInfo.city})`;
+        }
+
+        // 한국 외 지역에서 접속 시 위험도 증가
+        if (requestInfo.country !== "KR" && requestInfo.country !== "Korea") {
+            riskLevel = "high";
+            recommendations.push(
+                "해외에서 접속한 것으로 보입니다. 관리자 확인 필요"
+            );
+        }
+    }
+
+    // User-Agent가 너무 단순하거나 이상한 경우
+    if (
+        requestInfo.userAgent === "unknown" ||
+        requestInfo.userAgent.length < 20
+    ) {
+        riskLevel = "high";
+        recommendations.push("비정상적인 접속 환경이 감지되었습니다");
+    }
+
+    return {
+        isLikelyMobile,
+        isLikelyOffice,
+        locationInfo,
+        riskLevel,
+        recommendations,
+    };
+}
+
 // 디바이스 타입 감지
 export function detectDeviceType(userAgent: string): {
     type: "desktop" | "mobile" | "tablet" | "unknown";
@@ -218,6 +294,14 @@ export function extractRequestInfo(request: NextRequest): RequestInfo {
             "cf-ipcountry": headers["cf-ipcountry"] || "",
             "x-vercel-ip-country": headers["x-vercel-ip-country"] || "",
             "x-vercel-ip-city": headers["x-vercel-ip-city"] || "",
+            // 추가 헤더들 (디버깅용)
+            "x-real-ip": headers["x-real-ip"] || "",
+            "cf-connecting-ip": headers["cf-connecting-ip"] || "",
+            "x-client-ip": headers["x-client-ip"] || "",
+            "cf-ray": headers["cf-ray"] || "",
+            "x-vercel-deployment-url": headers["x-vercel-deployment-url"] || "",
+            "x-vercel-proxy-signature":
+                headers["x-vercel-proxy-signature"] || "",
         },
     };
 }
@@ -245,6 +329,14 @@ export function logWebhookEvent(
         if (requestInfo.city) {
             console.log("- 도시:", requestInfo.city);
         }
+
+        // 모든 헤더 정보 로깅 (디버깅용)
+        console.log("=== 모든 헤더 정보 ===");
+        Object.entries(requestInfo.headers).forEach(([key, value]) => {
+            if (value) {
+                console.log(`- ${key}: ${value}`);
+            }
+        });
     }
 
     if (data.content.text) {

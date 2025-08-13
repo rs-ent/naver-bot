@@ -1,4 +1,9 @@
-import { WebhookData, RequestInfo, detectDeviceType } from "./webhook";
+import {
+    WebhookData,
+    RequestInfo,
+    detectDeviceType,
+    analyzeRequestSource,
+} from "./webhook";
 import {
     getUserInfo,
     sendMessage,
@@ -275,6 +280,122 @@ export async function handleImageMessage(
     }
 }
 
+// 위치 메시지 핸들러
+export async function handleLocationMessage(
+    data: WebhookData,
+    requestInfo?: RequestInfo
+): Promise<void> {
+    const { source, content, issuedTime } = data;
+    const { userId, channelId, domainId } = source;
+    const { address, latitude, longitude } = content;
+
+    console.log(`위치 메시지 처리: ${address} (${latitude}, ${longitude})`);
+
+    try {
+        // 사용자 정보 조회
+        const userInfo = await getUserInfo(userId);
+
+        // 구글 시트에 위치 기록 저장
+        const attendanceData: AttendanceData = {
+            userId,
+            domainId,
+            action: "위치전송",
+            timestamp: issuedTime,
+            userInfo,
+            requestInfo,
+        };
+
+        await saveToGoogleSheet(attendanceData);
+
+        // 위치 정보 응답 메시지
+        let responseText =
+            "📍 위치 정보가 수신되었습니다!\n\n" +
+            "📊 위치 정보:\n" +
+            `• 시간: ${new Date(issuedTime).toLocaleString("ko-KR", {
+                timeZone: "Asia/Seoul",
+            })}\n` +
+            `• 이름: ${userInfo.name}\n` +
+            `• 부서: ${userInfo.department}`;
+
+        if (address) {
+            responseText += `\n• 주소: ${address}`;
+        }
+
+        if (latitude && longitude) {
+            responseText += `\n• 좌표: ${latitude.toFixed(
+                6
+            )}, ${longitude.toFixed(6)}`;
+            responseText += `\n• 지도: https://maps.google.com/?q=${latitude},${longitude}`;
+        }
+
+        // 디바이스 정보 추가
+        if (requestInfo) {
+            const deviceCheck = detectDeviceType(requestInfo.userAgent);
+            responseText += `\n• 디바이스: ${deviceCheck.deviceInfo}`;
+        }
+
+        responseText += "\n\n구글 시트에 기록되었습니다! ✅";
+
+        await sendMessage(
+            userId,
+            {
+                content: {
+                    type: "text",
+                    text: responseText,
+                },
+            },
+            channelId
+        );
+
+        // 추가: 위치 정보를 지도로 보여주는 버튼 메시지
+        if (latitude && longitude) {
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "template",
+                        altText: "위치 정보 - 지도에서 보기",
+                        template: {
+                            type: "button_template",
+                            text: `📍 ${address || "전송된 위치"}`,
+                            actions: [
+                                {
+                                    type: "uri",
+                                    label: "🗺️ 구글 지도에서 보기",
+                                    uri: `https://maps.google.com/?q=${latitude},${longitude}`,
+                                },
+                                {
+                                    type: "uri",
+                                    label: "🧭 네이버 지도에서 보기",
+                                    uri: `https://map.naver.com/v5/search/${latitude},${longitude}`,
+                                },
+                                {
+                                    type: "message",
+                                    label: "📋 좌표 복사",
+                                    text: `위치 좌표: ${latitude}, ${longitude}`,
+                                },
+                            ],
+                        },
+                    },
+                },
+                channelId
+            );
+        }
+    } catch (error) {
+        console.error("위치 메시지 처리 오류:", error);
+        await sendMessage(
+            userId,
+            {
+                content: {
+                    type: "text",
+                    text: "❌ 위치 정보 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
+                },
+            },
+            channelId
+        );
+    }
+}
+
 // 포스트백 메시지 핸들러
 export async function handlePostbackMessage(
     data: WebhookData,
@@ -320,11 +441,10 @@ export async function handlePostbackMessage(
 
             await saveToGoogleSheet(attendanceData);
 
-            // 디바이스 타입 체크
-            const deviceCheck = requestInfo
-                ? detectDeviceType(requestInfo.userAgent)
+            // 요청 소스 분석 (IP, User-Agent, 지역 등 종합 분석)
+            const sourceAnalysis = requestInfo
+                ? analyzeRequestSource(requestInfo)
                 : null;
-            const isNonDesktop = deviceCheck && !deviceCheck.isDesktop;
 
             let responseText =
                 "🟢 출근이 완료되었습니다!\n\n📊 출근 정보:\n• 시간: " +
@@ -338,18 +458,57 @@ export async function handlePostbackMessage(
                 "\n• 부서: " +
                 userInfo.department;
 
-            if (deviceCheck) {
-                responseText += "\n• 디바이스: " + deviceCheck.deviceInfo;
+            // 접속 정보 표시
+            if (requestInfo && sourceAnalysis) {
+                responseText += `\n• 접속 IP: ${requestInfo.ip}`;
+                responseText += `\n• 접속 지역: ${sourceAnalysis.locationInfo}`;
+
+                const deviceCheck = detectDeviceType(requestInfo.userAgent);
+                if (deviceCheck.deviceInfo !== "unknown") {
+                    responseText += `\n• 감지된 디바이스: ${deviceCheck.deviceInfo}`;
+                }
+
+                // 위험도에 따른 아이콘 표시
+                const riskIcon =
+                    sourceAnalysis.riskLevel === "high"
+                        ? "🔴"
+                        : sourceAnalysis.riskLevel === "medium"
+                        ? "🟡"
+                        : "🟢";
+                responseText += `\n• 접속 안전도: ${riskIcon} ${sourceAnalysis.riskLevel.toUpperCase()}`;
             }
 
             responseText += "\n\n구글 시트에 기록되었습니다! ✅";
 
-            // 데스크톱이 아닌 디바이스에서 접속한 경우 경고 메시지 추가
-            if (isNonDesktop) {
+            // 분석 결과에 따른 권장사항 및 경고
+            if (sourceAnalysis && sourceAnalysis.recommendations.length > 0) {
+                responseText += "\n\n📋 권장사항:";
+                sourceAnalysis.recommendations.forEach((rec, index) => {
+                    responseText += `\n${index + 1}. ${rec}`;
+                });
+            }
+
+            // 위험도가 높은 경우 강한 경고
+            if (sourceAnalysis?.riskLevel === "high") {
                 responseText +=
-                    "\n\n⚠️ 경고: 모바일/태블릿에서 출근 등록됨\n" +
-                    "📋 정확한 출근 관리를 위해서는 데스크톱(PC)에서 출근 등록을 해주세요.\n" +
-                    "👨‍💼 이 건에 대해서는 관리자와 상의하시기 바랍니다.";
+                    "\n\n🚨 중요 경고:\n" +
+                    "• 비정상적인 접속 환경이 감지되었습니다\n" +
+                    "• 반드시 관리자에게 보고하고 승인을 받으시기 바랍니다\n" +
+                    "• 보안상 이유로 추가 확인이 필요할 수 있습니다";
+            }
+            // 중간 위험도인 경우 일반 경고
+            else if (sourceAnalysis?.riskLevel === "medium") {
+                responseText +=
+                    "\n\n⚠️ 주의사항:\n" +
+                    "• 정확한 출근 관리를 위해 데스크톱 사용을 권장합니다\n" +
+                    "• 모바일 출근의 경우 관리자와 상의해주세요";
+            }
+            // 낮은 위험도인 경우에도 기본 안내
+            else {
+                responseText +=
+                    "\n\n💡 안내:\n" +
+                    "• 정상적인 접속 환경으로 확인됩니다\n" +
+                    "• 지속적인 보안을 위해 데스크톱 사용을 권장합니다";
             }
 
             await sendMessage(
@@ -413,6 +572,9 @@ export async function routeMessage(
                 break;
             case "image":
                 await handleImageMessage(data, requestInfo);
+                break;
+            case "location":
+                await handleLocationMessage(data, requestInfo);
                 break;
             default:
                 console.log("지원하지 않는 콘텐츠 타입:", contentType);
