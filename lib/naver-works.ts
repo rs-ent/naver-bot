@@ -203,6 +203,39 @@ export async function createPersistentMenu() {
     }
 }
 
+// Persistent Menu 삭제 함수
+export async function deletePersistentMenu() {
+    try {
+        const accessToken = await getAccessToken();
+
+        const response = await fetch(
+            `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/persistentmenu`,
+            {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                },
+            }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(
+                "Persistent Menu 삭제 실패:",
+                response.status,
+                errorText
+            );
+            throw new Error(`Persistent Menu 삭제 실패: ${response.status}`);
+        }
+
+        console.log("Persistent Menu 삭제 성공");
+        return { success: true };
+    } catch (error) {
+        console.error("deletePersistentMenu 오류:", error);
+        throw error;
+    }
+}
+
 // 파일 ID를 사용해서 콘텐츠 다운로드 (이미지, 파일, 오디오, 비디오)
 export async function downloadContent(fileId: string): Promise<Buffer> {
     try {
