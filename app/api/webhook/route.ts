@@ -4,6 +4,8 @@ import { getAccessToken } from "@/lib/auth";
 import { put } from "@vercel/blob";
 import sharp from "sharp";
 
+const userLastCheckinTime = new Map<string, number>();
+
 // 구글 시트 ID 추출 함수
 function extractSheetId(url: string | undefined): string {
     if (!url) {
@@ -840,8 +842,31 @@ export async function POST(request: NextRequest) {
             else if (postback) {
                 if (postback === "CHECKIN_ACTION") {
                     try {
-                        // 구글 시트에 출근 기록 저장
-                        // 사용자 정보 조회 (메시지용)
+                        const currentTime = Date.now();
+                        const lastCheckinTime =
+                            userLastCheckinTime.get(userId) || 0;
+                        const timeDiff = currentTime - lastCheckinTime;
+                        const cooldownPeriod = 30 * 1000;
+
+                        if (timeDiff < cooldownPeriod) {
+                            const remainingSeconds = Math.ceil(
+                                (cooldownPeriod - timeDiff) / 1000
+                            );
+                            await sendMessage(
+                                userId,
+                                {
+                                    content: {
+                                        type: "text",
+                                        text: `⏰ 잠시 후 다시 눌러주세요.\n${remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
+                                    },
+                                },
+                                channelId
+                            );
+                            return;
+                        }
+
+                        userLastCheckinTime.set(userId, currentTime);
+
                         const userInfo = await getUserInfo(userId);
 
                         await saveToGoogleSheet({
