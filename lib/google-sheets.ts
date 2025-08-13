@@ -207,7 +207,7 @@ export async function ensureHeaderExists(
         const checkResponse = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A1:S1`,
+            )}!A1:U1`,
             {
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -231,7 +231,7 @@ export async function ensureHeaderExists(
                 const headerResponse = await fetch(
                     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                         sheetName
-                    )}!A1:S1?valueInputOption=RAW`,
+                    )}!A1:U1?valueInputOption=RAW`,
                     {
                         method: "PUT",
                         headers: {
@@ -260,6 +260,8 @@ export async function ensureHeaderExists(
                                     "출근주소",
                                     "위도",
                                     "경도",
+                                    "위치검증",
+                                    "검증메모",
                                 ],
                             ],
                         }),
@@ -302,6 +304,8 @@ export interface AttendanceData {
         address?: string;
         latitude?: number;
         longitude?: number;
+        isVerified?: boolean;
+        verificationNotes?: string;
     };
 }
 
@@ -353,6 +357,8 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
                 attendanceData.locationInfo?.address || "",
                 attendanceData.locationInfo?.latitude || "",
                 attendanceData.locationInfo?.longitude || "",
+                attendanceData.locationInfo?.isVerified ? "검증됨" : "미검증",
+                attendanceData.locationInfo?.verificationNotes || "",
             ],
         ];
 
@@ -413,7 +419,7 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
         const response = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}:append?valueInputOption=RAW`,
+            )}!A:U:append?valueInputOption=RAW`,
             {
                 method: "POST",
                 headers: {

@@ -170,13 +170,13 @@ export async function handleTextMessage(
             {
                 content: {
                     type: "text",
-                    text: "📍 위치 정보와 함께 출근을 기록하시겠습니까?\n\n아래 버튼을 눌러 현재 위치를 공유해주세요:",
+                    text: "📍 위치 정보와 함께 출근을 기록하시겠습니까?\n\n⚠️ 주의: 정확한 현재 위치를 선택해주세요.\n임의 위치 선택 시 관리자가 확인할 수 있습니다.",
                     quickReply: {
                         items: [
                             {
                                 action: {
                                     type: "location",
-                                    label: "📍 현재 위치로 출근하기",
+                                    label: "📍 실제 현재 위치로 출근하기",
                                 },
                             },
                             {
@@ -470,6 +470,25 @@ export async function handleLocationMessage(
         // 사용자 정보 조회
         const userInfo = await getUserInfo(userId);
 
+        // 위치 검증 로직
+        let isVerified = true;
+        let verificationNotes = "";
+
+        if (latitude && longitude) {
+            // 일반적이지 않은 위치 패턴 감지
+            const isRoundCoordinate =
+                latitude % 1 === 0 ||
+                longitude % 1 === 0 || // 정수 좌표
+                latitude.toString().split(".")[1]?.length <= 2 ||
+                longitude.toString().split(".")[1]?.length <= 2; // 소수점 2자리 이하
+
+            if (isRoundCoordinate) {
+                isVerified = false;
+                verificationNotes =
+                    "선택된 위치일 가능성 있음 (정확도 낮은 좌표)";
+            }
+        }
+
         // 구글 시트에 위치 기반 출근 기록 저장
         const attendanceData: AttendanceData = {
             userId,
@@ -482,6 +501,8 @@ export async function handleLocationMessage(
                 address,
                 latitude,
                 longitude,
+                isVerified,
+                verificationNotes,
             },
         };
 
@@ -509,6 +530,21 @@ export async function handleLocationMessage(
         }
 
         responseText += "\n\n구글 시트에 기록되었습니다! ✅";
+
+        // 위치 검증 경고 (관리자용 참고사항)
+        if (latitude && longitude) {
+            // 일반적이지 않은 위치 패턴 감지
+            const isRoundCoordinate =
+                latitude % 1 === 0 ||
+                longitude % 1 === 0 || // 정수 좌표
+                latitude.toString().split(".")[1]?.length <= 2 ||
+                longitude.toString().split(".")[1]?.length <= 2; // 소수점 2자리 이하
+
+            if (isRoundCoordinate) {
+                responseText +=
+                    "\n\n⚠️ 관리자 확인: 선택된 위치일 가능성이 있습니다.";
+            }
+        }
 
         await sendMessage(
             userId,
@@ -716,7 +752,7 @@ export async function routeMessage(
         switch (contentType) {
             case "text":
                 if (text) {
-                    await handleTextMessage(data);
+                    await handleTextMessage(data, requestInfo);
                 }
                 break;
             case "image":
