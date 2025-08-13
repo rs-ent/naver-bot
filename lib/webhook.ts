@@ -137,9 +137,16 @@ export function analyzeRequestSource(requestInfo: RequestInfo): {
     let isLikelyOffice = false;
     let riskLevel: "low" | "medium" | "high" = "low";
 
-    // User-Agent 기반 분석
+    // User-Agent 기반 분석 (네이버웍스는 'security'로 마스킹됨)
     const deviceCheck = detectDeviceType(requestInfo.userAgent);
-    if (!deviceCheck.isDesktop) {
+    const isNaverWorksSecurityUA = requestInfo.userAgent === "security";
+
+    if (isNaverWorksSecurityUA) {
+        // 네이버웍스에서 보안상 User-Agent를 마스킹한 경우
+        recommendations.push(
+            "네이버웍스 보안 정책으로 디바이스 정보가 마스킹되었습니다"
+        );
+    } else if (!deviceCheck.isDesktop) {
         isLikelyMobile = true;
         riskLevel = "medium";
         recommendations.push("데스크톱에서 출근 등록을 권장합니다");
@@ -157,11 +164,23 @@ export function analyzeRequestSource(requestInfo: RequestInfo): {
             isLikelyOffice = true;
             recommendations.push("사내 네트워크에서 접속 중입니다");
         }
-        // 모바일 통신사 IP 패턴 (한국 기준 예시)
+        // 모바일 통신사 IP 패턴 (한국 기준 예시) - 위험도를 낮춤
         else if (ip.includes("mobile") || ip.includes("lte")) {
             isLikelyMobile = true;
-            riskLevel = "high";
+            if (riskLevel === "low") riskLevel = "medium"; // high에서 medium으로 완화
             recommendations.push("모바일 네트워크에서 접속한 것으로 보입니다");
+        }
+        // 한국 통신사 IP 대역 (일반적인 패턴들) - 정상으로 간주
+        else if (
+            ip.startsWith("211.") ||
+            ip.startsWith("220.") ||
+            ip.startsWith("121.") ||
+            ip.startsWith("175.") ||
+            ip.startsWith("210.")
+        ) {
+            recommendations.push(
+                "한국 내 일반 인터넷 서비스 제공업체에서 접속"
+            );
         }
     }
 
@@ -182,13 +201,19 @@ export function analyzeRequestSource(requestInfo: RequestInfo): {
         }
     }
 
-    // User-Agent가 너무 단순하거나 이상한 경우
+    // User-Agent가 너무 단순하거나 이상한 경우 (네이버웍스 'security' 제외)
     if (
         requestInfo.userAgent === "unknown" ||
-        requestInfo.userAgent.length < 20
+        (requestInfo.userAgent.length < 20 && !isNaverWorksSecurityUA)
     ) {
         riskLevel = "high";
         recommendations.push("비정상적인 접속 환경이 감지되었습니다");
+    }
+
+    // 네이버웍스 환경에서는 기본적으로 안전한 것으로 간주
+    // User-Agent가 'security'로 마스킹된 경우 위험도를 낮춤
+    if (isNaverWorksSecurityUA && riskLevel === "high") {
+        riskLevel = "low"; // 네이버웍스 보안 정책에 의한 마스킹은 정상
     }
 
     return {

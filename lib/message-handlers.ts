@@ -458,57 +458,27 @@ export async function handlePostbackMessage(
                 "\n• 부서: " +
                 userInfo.department;
 
-            // 접속 정보 표시
+            // 필요한 경우에만 지역 정보 표시
             if (requestInfo && sourceAnalysis) {
-                responseText += `\n• 접속 IP: ${requestInfo.ip}`;
-                responseText += `\n• 접속 지역: ${sourceAnalysis.locationInfo}`;
-
-                const deviceCheck = detectDeviceType(requestInfo.userAgent);
-                if (deviceCheck.deviceInfo !== "unknown") {
-                    responseText += `\n• 감지된 디바이스: ${deviceCheck.deviceInfo}`;
+                // 해외 접속인 경우에만 지역 정보 표시
+                if (
+                    requestInfo.country &&
+                    requestInfo.country !== "KR" &&
+                    requestInfo.country !== "Korea"
+                ) {
+                    responseText += `\n• 접속 지역: ${sourceAnalysis.locationInfo}`;
                 }
-
-                // 위험도에 따른 아이콘 표시
-                const riskIcon =
-                    sourceAnalysis.riskLevel === "high"
-                        ? "🔴"
-                        : sourceAnalysis.riskLevel === "medium"
-                        ? "🟡"
-                        : "🟢";
-                responseText += `\n• 접속 안전도: ${riskIcon} ${sourceAnalysis.riskLevel.toUpperCase()}`;
             }
 
             responseText += "\n\n구글 시트에 기록되었습니다! ✅";
 
-            // 분석 결과에 따른 권장사항 및 경고
-            if (sourceAnalysis && sourceAnalysis.recommendations.length > 0) {
-                responseText += "\n\n📋 권장사항:";
-                sourceAnalysis.recommendations.forEach((rec, index) => {
-                    responseText += `\n${index + 1}. ${rec}`;
-                });
-            }
-
-            // 위험도가 높은 경우 강한 경고
+            // 필요한 경우에만 간단한 안내 메시지
             if (sourceAnalysis?.riskLevel === "high") {
                 responseText +=
-                    "\n\n🚨 중요 경고:\n" +
-                    "• 비정상적인 접속 환경이 감지되었습니다\n" +
-                    "• 반드시 관리자에게 보고하고 승인을 받으시기 바랍니다\n" +
-                    "• 보안상 이유로 추가 확인이 필요할 수 있습니다";
-            }
-            // 중간 위험도인 경우 일반 경고
-            else if (sourceAnalysis?.riskLevel === "medium") {
+                    "\n\n🚨 해외 접속이 감지되었습니다. 관리자와 상의해주세요.";
+            } else if (sourceAnalysis?.riskLevel === "medium") {
                 responseText +=
-                    "\n\n⚠️ 주의사항:\n" +
-                    "• 정확한 출근 관리를 위해 데스크톱 사용을 권장합니다\n" +
-                    "• 모바일 출근의 경우 관리자와 상의해주세요";
-            }
-            // 낮은 위험도인 경우에도 기본 안내
-            else {
-                responseText +=
-                    "\n\n💡 안내:\n" +
-                    "• 정상적인 접속 환경으로 확인됩니다\n" +
-                    "• 지속적인 보안을 위해 데스크톱 사용을 권장합니다";
+                    "\n\n📱 모바일에서 출근하신 경우 관리자와 상의해주세요.";
             }
 
             await sendMessage(
