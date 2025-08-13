@@ -172,15 +172,19 @@ export async function handleTextMessage(
                     type: "text",
                     text: "📍 위치 정보와 함께 출근을 기록하시겠습니까?\n\n아래 버튼을 눌러 현재 위치를 공유해주세요:",
                     quickReply: {
-                        buttonList: [
+                        items: [
                             {
-                                type: "location",
-                                title: "📍 현재 위치로 출근하기",
+                                action: {
+                                    type: "location",
+                                    label: "📍 현재 위치로 출근하기",
+                                },
                             },
                             {
-                                type: "message",
-                                title: "🏢 위치 없이 출근하기",
-                                value: "CHECKIN_SIMPLE",
+                                action: {
+                                    type: "message",
+                                    label: "🏢 위치 없이 출근하기",
+                                    text: "CHECKIN_SIMPLE",
+                                },
                             },
                         ],
                     },
