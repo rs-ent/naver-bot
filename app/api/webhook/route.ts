@@ -3,10 +3,16 @@ import crypto from "crypto";
 import { getAccessToken } from "@/lib/auth";
 import { put } from "@vercel/blob";
 import sharp from "sharp";
+import {
+    verifySignature,
+    validateWebhookData,
+    extractWebhookHeaders,
+    logWebhookEvent,
+} from "@/lib/webhook";
+import { routeMessage } from "@/lib/message-handlers";
 
 const userLastCheckinTime = new Map<string, number>();
 
-// 구글 시트 ID 추출 함수
 function extractSheetId(url: string | undefined): string {
     if (!url) {
         console.error("GOOGLE_SHEET_URL 환경 변수가 설정되지 않았습니다.");
@@ -16,26 +22,22 @@ function extractSheetId(url: string | undefined): string {
     return match ? match[1] : "";
 }
 
-// Google Service Account JWT 토큰 생성
 function createJWT(serviceAccount: any): string {
-    // JWT 헤더
     const header = {
         alg: "RS256",
         typ: "JWT",
-        kid: serviceAccount.private_key_id, // Key ID 추가
+        kid: serviceAccount.private_key_id,
     };
 
-    // JWT 페이로드
     const now = Math.floor(Date.now() / 1000);
     const payload = {
         iss: serviceAccount.client_email,
         scope: "https://www.googleapis.com/auth/spreadsheets",
         aud: "https://oauth2.googleapis.com/token",
         iat: now,
-        exp: now + 3600, // 1시간
+        exp: now + 3600,
     };
 
-    // Base64URL 인코딩
     const encodedHeader = Buffer.from(JSON.stringify(header)).toString(
         "base64url"
     );
@@ -43,13 +45,10 @@ function createJWT(serviceAccount: any): string {
         "base64url"
     );
 
-    // 서명할 데이터
     const signatureInput = `${encodedHeader}.${encodedPayload}`;
 
-    // 개인키로 서명 생성
     const privateKey = serviceAccount.private_key;
 
-    // Private Key 유효성 검사
     if (!privateKey || !privateKey.includes("BEGIN PRIVATE KEY")) {
         throw new Error("Private Key 형식이 올바르지 않습니다.");
     }
@@ -79,7 +78,6 @@ function createJWT(serviceAccount: any): string {
     } catch (signError) {
         console.error("JWT 서명 생성 오류:", signError);
 
-        // 대안: 더 간단한 서명 방식 시도
         try {
             console.log("대안 서명 방식 시도...");
             const signature = crypto.sign(
@@ -102,7 +100,6 @@ function createJWT(serviceAccount: any): string {
     }
 }
 
-// 구글 시트 헤더 확인 및 추가
 async function ensureHeaderExists(
     sheetId: string,
     sheetName: string,
@@ -111,7 +108,6 @@ async function ensureHeaderExists(
     try {
         console.log(`헤더 확인: ${sheetName} 시트`);
 
-        // 첫 번째 행 데이터 조회
         const checkResponse = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
@@ -126,7 +122,6 @@ async function ensureHeaderExists(
         if (checkResponse.ok) {
             const data = await checkResponse.json();
 
-            // 첫 번째 행에 데이터가 없거나 헤더가 아닌 경우
             if (
                 !data.values ||
                 data.values.length === 0 ||
@@ -135,7 +130,6 @@ async function ensureHeaderExists(
             ) {
                 console.log("헤더가 없습니다. 헤더를 추가합니다.");
 
-                // 헤더 추가
                 const headerResponse = await fetch(
                     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                         sheetName
@@ -149,18 +143,18 @@ async function ensureHeaderExists(
                         body: JSON.stringify({
                             values: [
                                 [
-                                    "타임스탬프", // A열
-                                    "한국시간", // B열
-                                    "이름", // C열
-                                    "이메일", // D열
-                                    "부서", // E열
-                                    "직급", // F열
-                                    "직책", // G열
-                                    "사번", // H열
-                                    "액션", // I열
-                                    "도메인ID", // J열
-                                    "출처", // K열
-                                    "이미지URL", // L열
+                                    "타임스탬프",
+                                    "한국시간",
+                                    "이름",
+                                    "이메일",
+                                    "부서",
+                                    "직급",
+                                    "직책",
+                                    "사번",
+                                    "액션",
+                                    "도메인ID",
+                                    "출처",
+                                    "이미지URL",
                                 ],
                             ],
                         }),
@@ -183,10 +177,8 @@ async function ensureHeaderExists(
     }
 }
 
-// Google Access Token 획득
 async function getGoogleAccessToken(): Promise<string> {
     try {
-        // 필수 환경변수 확인
         const requiredEnvs = [
             "GOOGLE_SERVICE_ACCOUNT_TYPE",
             "GOOGLE_SERVICE_ACCOUNT_PROJECT_ID",
@@ -202,7 +194,6 @@ async function getGoogleAccessToken(): Promise<string> {
             }
         }
 
-        // Private Key 개행 문자 처리
         const privateKey =
             process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(
                 /\\n/g,
@@ -218,7 +209,6 @@ async function getGoogleAccessToken(): Promise<string> {
         console.log("- 시작 부분:", privateKey?.substring(0, 50) + "...");
         console.log("- 끝 부분:", "..." + privateKey?.slice(-50));
 
-        // 환경변수로부터 Service Account 객체 구성
         const serviceAccount = {
             type: process.env.GOOGLE_SERVICE_ACCOUNT_TYPE,
             project_id: process.env.GOOGLE_SERVICE_ACCOUNT_PROJECT_ID,
@@ -249,7 +239,6 @@ async function getGoogleAccessToken(): Promise<string> {
 
         const jwt = createJWT(serviceAccount);
 
-        // Google OAuth2 서버에서 액세스 토큰 요청
         const response = await fetch("https://oauth2.googleapis.com/token", {
             method: "POST",
             headers: {
@@ -280,15 +269,12 @@ async function getGoogleAccessToken(): Promise<string> {
     }
 }
 
-// 네이버웍스 사용자 정보 조회
 async function getUserInfo(userId: string): Promise<any> {
     try {
         console.log(`사용자 정보 조회 시작: ${userId}`);
 
-        // 네이버웍스 Access Token 발급
         const accessToken = await getAccessToken();
 
-        // 사용자 정보 조회 (프로필 정보)
         const response = await fetch(
             `${process.env.NAVER_WORKS_API_URL}/users/${userId}`,
             {
@@ -302,7 +288,6 @@ async function getUserInfo(userId: string): Promise<any> {
         if (!response.ok) {
             const errorText = await response.text();
             console.error("사용자 정보 조회 실패:", response.status, errorText);
-            // 실패 시 기본 정보 반환
             return {
                 name: userId.substring(0, 8) + "...",
                 email: "정보없음",
@@ -315,13 +300,11 @@ async function getUserInfo(userId: string): Promise<any> {
 
         const userData = await response.json();
 
-        // 이름 구성 (성 + 이름)
         const fullName =
             `${userData.userName?.lastName || ""} ${
                 userData.userName?.firstName || ""
             }`.trim() || "이름없음";
 
-        // 조직 정보 추출 (primary 조직 우선)
         const primaryOrg =
             userData.organizations?.find((org: any) => org.primary) ||
             userData.organizations?.[0];
@@ -347,7 +330,6 @@ async function getUserInfo(userId: string): Promise<any> {
         };
     } catch (error) {
         console.error("사용자 정보 조회 오류:", error);
-        // 오류 시 기본 정보 반환
         return {
             name: userId.substring(0, 8) + "...",
             email: "정보없음",
@@ -359,7 +341,6 @@ async function getUserInfo(userId: string): Promise<any> {
     }
 }
 
-// 이미지를 WebP로 압축하고 Vercel Blob에 저장
 async function saveImageToBlob(
     imageBuffer: Buffer,
     userId: string,
@@ -369,17 +350,16 @@ async function saveImageToBlob(
         console.log("=== 이미지 압축 및 Blob 저장 시작 ===");
         console.log("- 원본 이미지 크기:", imageBuffer.length, "bytes");
 
-        // Sharp를 사용해 WebP로 변환 및 압축
         const compressedImage = await sharp(imageBuffer)
             .webp({
-                quality: 80, // 품질 80% (파일 크기와 품질의 균형)
-                effort: 6, // 압축 노력 수준 (0-6, 높을수록 더 많이 압축)
+                quality: 80,
+                effort: 6,
             })
             .resize({
-                width: 1920, // 최대 가로 크기
-                height: 1920, // 최대 세로 크기
-                fit: "inside", // 비율 유지하면서 크기 조정
-                withoutEnlargement: true, // 원본보다 크게 만들지 않음
+                width: 1920,
+                height: 1920,
+                fit: "inside",
+                withoutEnlargement: true,
             })
             .toBuffer();
 
@@ -391,12 +371,10 @@ async function saveImageToBlob(
             ) + "%"
         );
 
-        // 파일명 생성 (userId_timestamp.webp)
         const filename = `attendance_${userId}_${Date.now()}.webp`;
 
-        // Vercel Blob에 업로드
         const blob = await put(filename, compressedImage, {
-            access: "public", // 공개 접근 허용
+            access: "public",
             contentType: "image/webp",
         });
 
@@ -409,13 +387,12 @@ async function saveImageToBlob(
     }
 }
 
-// 구글 시트에 출근 기록 저장
 async function saveToGoogleSheet(attendanceData: {
     userId: string;
     domainId: number;
     action: string;
     timestamp: string;
-    imageUrl?: string; // 이미지 URL (선택적)
+    imageUrl?: string;
 }) {
     try {
         console.log("=== Google Service Account 인증 시작 ===");
@@ -425,42 +402,36 @@ async function saveToGoogleSheet(attendanceData: {
             throw new Error("구글 시트 ID를 추출할 수 없습니다.");
         }
 
-        // Google Access Token 획득
         const accessToken = await getGoogleAccessToken();
 
-        // 사용자 정보 조회
         const userInfo = await getUserInfo(attendanceData.userId);
 
-        // 시트에 기록할 데이터 준비
         const values = [
             [
-                attendanceData.timestamp, // A열: ISO 타임스탬프
-                new Date(attendanceData.timestamp).toLocaleString("ko-KR"), // B열: 한국 시간
-                userInfo.name, // C열: 사용자 이름
-                userInfo.email, // D열: 이메일
-                userInfo.department, // E열: 부서
-                userInfo.level, // F열: 직급
-                userInfo.position, // G열: 직책
-                userInfo.employeeNumber, // H열: 사번
-                attendanceData.action, // I열: 액션 (출근/퇴근/이미지업로드)
-                attendanceData.domainId, // J열: 도메인 ID
-                "네이버웍스 봇", // K열: 출처
-                attendanceData.imageUrl || "", // L열: 이미지 URL (없으면 빈 문자열)
+                attendanceData.timestamp,
+                new Date(attendanceData.timestamp).toLocaleString("ko-KR"),
+                userInfo.name,
+                userInfo.email,
+                userInfo.department,
+                userInfo.level,
+                userInfo.position,
+                userInfo.employeeNumber,
+                attendanceData.action,
+                attendanceData.domainId,
+                "네이버웍스 봇",
+                attendanceData.imageUrl || "",
             ],
         ];
 
-        // 시트 이름 또는 인덱스 처리
         const worksheet = process.env.GOOGLE_SHEET_WORKSHEET || "0";
-        let sheetName = "Sheet1"; // 기본값
+        let sheetName = "Sheet1";
 
-        // 숫자인 경우 인덱스로 판단하여 시트 정보 조회
         if (/^\d+$/.test(worksheet)) {
             try {
                 console.log(
                     `시트 인덱스 ${worksheet}에 해당하는 시트 이름 조회 중...`
                 );
 
-                // 스프레드시트 메타데이터 조회
                 const metaResponse = await fetch(
                     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties`,
                     {
@@ -493,16 +464,13 @@ async function saveToGoogleSheet(attendanceData: {
                 console.log("기본값 사용:", sheetName);
             }
         } else {
-            // 문자열인 경우 시트 이름으로 직접 사용
             sheetName = worksheet;
         }
 
         console.log(`사용할 시트 이름: ${sheetName}`);
 
-        // 헤더 확인 및 추가
         await ensureHeaderExists(sheetId, sheetName, accessToken);
 
-        // Google Sheets API 호출 (OAuth2 토큰 사용)
         const response = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
@@ -538,21 +506,6 @@ async function saveToGoogleSheet(attendanceData: {
     }
 }
 
-// 네이버웍스 웹훅 시그니처 검증
-function verifySignature(
-    signature: string,
-    body: string,
-    secret: string
-): boolean {
-    const expectedSignature = crypto
-        .createHmac("sha256", secret)
-        .update(body)
-        .digest("base64");
-
-    return signature === expectedSignature;
-}
-
-// Persistent Menu 등록 함수
 async function createPersistentMenu() {
     try {
         const accessToken = await getAccessToken();
@@ -624,15 +577,12 @@ async function createPersistentMenu() {
     }
 }
 
-// 네이버웍스로 메시지 전송
 async function sendMessage(userId: string, message: any, channelId?: string) {
     try {
-        // channelId가 있으면 채널 메시지, 없으면 사용자 직접 메시지
         const endpoint = channelId
             ? `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/channels/${channelId}/messages`
             : `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/users/${userId}/messages`;
 
-        // Access Token 발급받기
         const accessToken = await getAccessToken();
 
         const response = await fetch(endpoint, {
@@ -673,17 +623,14 @@ async function sendMessage(userId: string, message: any, channelId?: string) {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.text();
-        const signature =
-            request.headers.get("X-WORKS-Signature") ||
-            request.headers.get("x-works-signature") ||
-            "";
+        const { signature, isValid } = extractWebhookHeaders(request.headers);
 
-        console.log("=== 웹훅 수신 ===");
-        console.log("Body:", body);
-        console.log("Signature:", signature);
+        console.log("=== 웹훅 수신 시작 ===");
+        console.log("Body 길이:", body.length);
+        console.log("Signature 존재 여부:", isValid);
 
-        // Bot Secret을 시그니처 검증에 사용
         if (
+            !isValid ||
             !verifySignature(
                 signature,
                 body,
@@ -699,232 +646,33 @@ export async function POST(request: NextRequest) {
 
         console.log("시그니처 검증 성공");
 
-        const data = JSON.parse(body);
-        console.log("파싱된 데이터:", JSON.stringify(data, null, 2));
-
-        const { type, source, content } = data;
-
-        // 메시지 타입 처리
-        if (type === "message") {
-            const { userId, channelId } = source;
-            const { text, postback, type: contentType, resourceUrl } = content;
-
-            console.log(
-                `메시지 수신: ${
-                    channelId ? "채널" : "1:1 채팅"
-                } - userId: ${userId}${
-                    channelId ? ", channelId: " + channelId : ""
-                }, contentType: ${contentType}`
+        let data;
+        try {
+            data = JSON.parse(body);
+        } catch (parseError) {
+            console.error("JSON 파싱 오류:", parseError);
+            return NextResponse.json(
+                { error: "Invalid JSON" },
+                { status: 400 }
             );
-
-            // 이미지 메시지 처리
-            if (contentType === "image" && resourceUrl) {
-                try {
-                    console.log("이미지 메시지 처리 시작:", resourceUrl);
-
-                    // 네이버웍스에서 이미지 다운로드
-                    const accessToken = await getAccessToken();
-                    const imageResponse = await fetch(resourceUrl, {
-                        headers: {
-                            Authorization: `Bearer ${accessToken}`,
-                        },
-                    });
-
-                    if (!imageResponse.ok) {
-                        throw new Error(
-                            `이미지 다운로드 실패: ${imageResponse.status}`
-                        );
-                    }
-
-                    // 이미지를 Buffer로 변환
-                    const imageBuffer = Buffer.from(
-                        await imageResponse.arrayBuffer()
-                    );
-
-                    // Vercel Blob에 압축하여 저장
-                    const blobUrl = await saveImageToBlob(
-                        imageBuffer,
-                        userId,
-                        data.issuedTime
-                    );
-
-                    // 사용자 정보 조회
-                    const userInfo = await getUserInfo(userId);
-
-                    // 구글 시트에 이미지 기록 저장 (출근 기록과 동일한 형태로)
-                    await saveToGoogleSheet({
-                        userId: userId,
-                        domainId: source.domainId,
-                        action: "이미지업로드",
-                        timestamp: data.issuedTime,
-                        imageUrl: blobUrl, // 이미지 URL 추가
-                    });
-
-                    // 사용자에게 완료 메시지 전송
-                    await sendMessage(
-                        userId,
-                        {
-                            content: {
-                                type: "text",
-                                text:
-                                    `📸 이미지가 성공적으로 업로드되었습니다!\n\n` +
-                                    `👤 업로드 정보:\n` +
-                                    `• 시간: ${new Date(
-                                        data.issuedTime
-                                    ).toLocaleString("ko-KR")}\n` +
-                                    `• 이름: ${userInfo.name}\n` +
-                                    `• 부서: ${userInfo.department}\n` +
-                                    `• 압축된 이미지: ${blobUrl}\n\n` +
-                                    `구글 시트에 기록되었습니다! ✅`,
-                            },
-                        },
-                        channelId
-                    );
-                } catch (error) {
-                    console.error("이미지 처리 오류:", error);
-                    await sendMessage(
-                        userId,
-                        {
-                            content: {
-                                type: "text",
-                                text: "❌ 이미지 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
-                            },
-                        },
-                        channelId
-                    );
-                }
-            }
-
-            // /test 명령어 처리
-            if (text === "/test") {
-                await sendMessage(
-                    userId,
-                    {
-                        content: {
-                            type: "text",
-                            text: "Hello, World!",
-                        },
-                    },
-                    channelId
-                );
-            }
-
-            // /menu 명령어 처리 (Persistent Menu 등록)
-            else if (text === "/menu") {
-                try {
-                    await createPersistentMenu();
-                    await sendMessage(
-                        userId,
-                        {
-                            content: {
-                                type: "text",
-                                text: "✅ 출근하기 버튼이 등록되었습니다!\n이제 하단에 '출근하기' 버튼을 사용할 수 있습니다.",
-                            },
-                        },
-                        channelId
-                    );
-                } catch (error) {
-                    console.error("메뉴 등록 오류:", error);
-                    await sendMessage(
-                        userId,
-                        {
-                            content: {
-                                type: "text",
-                                text: "❌ 메뉴 등록 중 오류가 발생했습니다. 다시 시도해주세요.",
-                            },
-                        },
-                        channelId
-                    );
-                }
-            }
-
-            // Persistent Menu 버튼 postback 처리
-            else if (postback) {
-                if (postback === "CHECKIN_ACTION") {
-                    try {
-                        const currentTime = Date.now();
-                        const lastCheckinTime =
-                            userLastCheckinTime.get(userId) || 0;
-                        const timeDiff = currentTime - lastCheckinTime;
-                        const cooldownPeriod = 30 * 1000;
-
-                        if (timeDiff < cooldownPeriod) {
-                            const remainingSeconds = Math.ceil(
-                                (cooldownPeriod - timeDiff) / 1000
-                            );
-                            await sendMessage(
-                                userId,
-                                {
-                                    content: {
-                                        type: "text",
-                                        text: `⏰ 잠시 후 다시 눌러주세요.\n${remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
-                                    },
-                                },
-                                channelId
-                            );
-                            return;
-                        }
-
-                        userLastCheckinTime.set(userId, currentTime);
-
-                        const userInfo = await getUserInfo(userId);
-
-                        await saveToGoogleSheet({
-                            userId: userId,
-                            domainId: source.domainId,
-                            action: "출근",
-                            timestamp: data.issuedTime,
-                        });
-
-                        await sendMessage(
-                            userId,
-                            {
-                                content: {
-                                    type: "text",
-                                    text:
-                                        "🟢 출근이 완료되었습니다!\n\n📊 출근 정보:\n• 시간: " +
-                                        new Date(
-                                            data.issuedTime
-                                        ).toLocaleString("ko-KR") +
-                                        "\n• 이름: " +
-                                        userInfo.name +
-                                        "\n• 이메일: " +
-                                        userInfo.email +
-                                        "\n• 부서: " +
-                                        userInfo.department +
-                                        "\n• 직급: " +
-                                        userInfo.level +
-                                        "\n• 직책: " +
-                                        userInfo.position +
-                                        "\n• 사번: " +
-                                        userInfo.employeeNumber +
-                                        "\n• 도메인: " +
-                                        source.domainId +
-                                        "\n\n구글 시트에 기록되었습니다! ✅",
-                                },
-                            },
-                            channelId
-                        );
-                    } catch (error) {
-                        console.error("출근 처리 오류:", error);
-                        await sendMessage(
-                            userId,
-                            {
-                                content: {
-                                    type: "text",
-                                    text: "❌ 출근 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
-                                },
-                            },
-                            channelId
-                        );
-                    }
-                }
-            }
         }
 
+        if (!validateWebhookData(data)) {
+            console.error("웹훅 데이터 유효성 검증 실패");
+            return NextResponse.json(
+                { error: "Invalid webhook data" },
+                { status: 400 }
+            );
+        }
+
+        logWebhookEvent(data);
+
+        await routeMessage(data);
+
+        console.log("=== 웹훅 처리 완료 ===");
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error("Webhook error:", error);
+        console.error("Webhook 처리 중 오류 발생:", error);
         return NextResponse.json(
             { error: "Internal server error" },
             { status: 500 }
