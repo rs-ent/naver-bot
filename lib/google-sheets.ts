@@ -415,13 +415,35 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
         // 헤더 확인 및 추가
         await ensureHeaderExists(sheetId, sheetName, accessToken);
 
-        // Google Sheets API 호출 (OAuth2 토큰 사용)
+        // 다음 빈 행 찾기
+        const findResponse = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+                sheetName
+            )}!A:A`,
+            {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                },
+            }
+        );
+
+        let nextRow = 2; // 기본값: 헤더 다음 행
+        if (findResponse.ok) {
+            const findData = await findResponse.json();
+            if (findData.values) {
+                nextRow = findData.values.length + 1;
+            }
+        }
+
+        console.log(`다음 빈 행: ${nextRow}`);
+
+        // Google Sheets API 호출 - 명시적 범위 지정
         const response = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A:U:append?valueInputOption=RAW`,
+            )}!A${nextRow}:U${nextRow}?valueInputOption=RAW`,
             {
-                method: "POST",
+                method: "PUT",
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
                     "Content-Type": "application/json",
