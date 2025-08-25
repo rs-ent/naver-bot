@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 
 interface AttendanceRecord {
     id: string;
@@ -92,12 +93,30 @@ export default function AdminDashboard() {
             <div className="max-w-7xl mx-auto">
                 {/* 헤더 */}
                 <div className="mb-8">
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                        🏢 출근 관리 대시보드
-                    </h1>
-                    <p className="text-gray-600">
-                        직원들의 출근 현황을 실시간으로 확인하세요
-                    </p>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                                🏢 출근 관리 대시보드
+                            </h1>
+                            <p className="text-gray-600">
+                                직원들의 출근 현황을 실시간으로 확인하세요
+                            </p>
+                        </div>
+                        <div className="flex space-x-4">
+                            <Link
+                                href="/admin/weekly-summary"
+                                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                            >
+                                📊 주간 결산 보기
+                            </Link>
+                            <Link
+                                href="/admin/scheduler"
+                                className="bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors"
+                            >
+                                ⏰ 스케줄러 관리
+                            </Link>
+                        </div>
+                    </div>
                 </div>
 
                 {/* 날짜 선택 */}

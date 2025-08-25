@@ -472,3 +472,296 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
         throw error;
     }
 }
+
+// 주간 결산 데이터 타입 정의
+export interface WeeklySummary {
+    weekStart: string;
+    weekEnd: string;
+    totalEmployees: number;
+    totalCheckins: number;
+    averageCheckinTime: string;
+    latestCheckin: {
+        name: string;
+        time: string;
+        department: string;
+    };
+    departmentStats: {
+        [department: string]: {
+            totalCheckins: number;
+            averageTime: string;
+            latestCheckin: string;
+        };
+    };
+}
+
+// 특정 주의 출근 데이터 조회
+export async function getWeeklyAttendanceData(
+    sheetId: string,
+    sheetName: string,
+    accessToken: string,
+    weekStart: Date,
+    weekEnd: Date
+): Promise<any[]> {
+    try {
+        const startDate = weekStart.toISOString().split("T")[0];
+        const endDate = weekEnd.toISOString().split("T")[0];
+
+        console.log(`주간 출근 데이터 조회: ${startDate} ~ ${endDate}`);
+
+        const response = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+                sheetName
+            )}!A:U`,
+            {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                },
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`Google Sheets API 오류: ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data.values || data.values.length < 2) {
+            return [];
+        }
+
+        const headers = data.values[0];
+        const rows = data.values.slice(1);
+
+        const filteredRows = rows.filter((row: any[]) => {
+            if (row.length < 3) return false;
+
+            const timestamp = row[0];
+            const action = row[8];
+
+            if (!timestamp || (action !== "출근" && action !== "위치출근"))
+                return false;
+
+            try {
+                const rowDate = new Date(timestamp);
+                return rowDate >= weekStart && rowDate <= weekEnd;
+            } catch {
+                return false;
+            }
+        });
+
+        return filteredRows.map((row: any[]) => {
+            const result: any = {};
+            headers.forEach((header: string, index: number) => {
+                result[header] = row[index] || "";
+            });
+            return result;
+        });
+    } catch (error) {
+        console.error("주간 출근 데이터 조회 오류:", error);
+        throw error;
+    }
+}
+
+// 주간 결산 생성
+export async function generateWeeklySummary(
+    sheetId: string,
+    sheetName: string,
+    accessToken: string,
+    targetDate: Date = new Date()
+): Promise<WeeklySummary> {
+    try {
+        const weekStart = new Date(targetDate);
+        weekStart.setDate(targetDate.getDate() - targetDate.getDay());
+        weekStart.setHours(0, 0, 0, 0);
+
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        weekEnd.setHours(23, 59, 59, 999);
+
+        const attendanceData = await getWeeklyAttendanceData(
+            sheetId,
+            sheetName,
+            accessToken,
+            weekStart,
+            weekEnd
+        );
+
+        if (attendanceData.length === 0) {
+            return {
+                weekStart: weekStart.toISOString().split("T")[0],
+                weekEnd: weekEnd.toISOString().split("T")[0],
+                totalEmployees: 0,
+                totalCheckins: 0,
+                averageCheckinTime: "00:00",
+                latestCheckin: {
+                    name: "데이터 없음",
+                    time: "00:00",
+                    department: "데이터 없음",
+                },
+                departmentStats: {},
+            };
+        }
+
+        const uniqueEmployees = new Set(
+            attendanceData.map((row) => row["이름"])
+        );
+        const totalEmployees = uniqueEmployees.size;
+        const totalCheckins = attendanceData.length;
+
+        const checkinTimes: Date[] = [];
+        const departmentStats: { [key: string]: any } = {};
+        let latestCheckin = {
+            name: "",
+            time: "",
+            department: "",
+            timestamp: new Date(0),
+        };
+
+        attendanceData.forEach((row) => {
+            try {
+                const timestamp = new Date(row["타임스탬프"]);
+                const name = row["이름"] || "이름없음";
+                const department = row["부서"] || "부서없음";
+                const koreanTime = row["한국시간"] || "";
+
+                checkinTimes.push(timestamp);
+
+                if (timestamp > latestCheckin.timestamp) {
+                    latestCheckin = {
+                        name,
+                        time: koreanTime.split(" ")[1] || "00:00",
+                        department,
+                        timestamp,
+                    };
+                }
+
+                if (!departmentStats[department]) {
+                    departmentStats[department] = {
+                        totalCheckins: 0,
+                        times: [],
+                        latestCheckin: "",
+                    };
+                }
+
+                departmentStats[department].totalCheckins++;
+                departmentStats[department].times.push(timestamp);
+
+                if (koreanTime > departmentStats[department].latestCheckin) {
+                    departmentStats[department].latestCheckin = koreanTime;
+                }
+            } catch (error) {
+                console.warn("행 데이터 파싱 오류:", error);
+            }
+        });
+
+        const averageTime = calculateAverageCheckinTime(checkinTimes);
+
+        const processedDepartmentStats: { [key: string]: any } = {};
+        Object.keys(departmentStats).forEach((dept) => {
+            const stats = departmentStats[dept];
+            processedDepartmentStats[dept] = {
+                totalCheckins: stats.totalCheckins,
+                averageTime: calculateAverageCheckinTime(stats.times),
+                latestCheckin: stats.latestCheckin,
+            };
+        });
+
+        return {
+            weekStart: weekStart.toISOString().split("T")[0],
+            weekEnd: weekEnd.toISOString().split("T")[0],
+            totalEmployees,
+            totalCheckins,
+            averageCheckinTime: averageTime,
+            latestCheckin: {
+                name: latestCheckin.name,
+                time: latestCheckin.time,
+                department: latestCheckin.department,
+            },
+            departmentStats: processedDepartmentStats,
+        };
+    } catch (error) {
+        console.error("주간 결산 생성 오류:", error);
+        throw error;
+    }
+}
+
+// 평균 출근 시간 계산
+function calculateAverageCheckinTime(times: Date[]): string {
+    if (times.length === 0) return "00:00";
+
+    const totalMinutes = times.reduce((sum, time) => {
+        const hours = time.getHours();
+        const minutes = time.getMinutes();
+        return sum + (hours * 60 + minutes);
+    }, 0);
+
+    const averageMinutes = Math.round(totalMinutes / times.length);
+    const hours = Math.floor(averageMinutes / 60);
+    const minutes = averageMinutes % 60;
+
+    return `${hours.toString().padStart(2, "0")}:${minutes
+        .toString()
+        .padStart(2, "0")}`;
+}
+
+// 주간 결산을 구글 시트에 저장
+export async function saveWeeklySummaryToSheet(
+    summary: WeeklySummary,
+    sheetId: string,
+    accessToken: string
+): Promise<void> {
+    try {
+        const summarySheetName = "주간결산";
+
+        const summaryData = [
+            ["주간 결산 보고서"],
+            [""],
+            ["기간", `${summary.weekStart} ~ ${summary.weekEnd}`],
+            [""],
+            ["전체 통계"],
+            ["총 직원 수", summary.totalEmployees],
+            ["총 출근 횟수", summary.totalCheckins],
+            ["평균 출근 시간", summary.averageCheckinTime],
+            [
+                "가장 늦은 출근",
+                `${summary.latestCheckin.name} (${summary.latestCheckin.department}) - ${summary.latestCheckin.time}`,
+            ],
+            [""],
+            ["부서별 통계"],
+            ["부서", "출근 횟수", "평균 출근 시간", "가장 늦은 출근"],
+        ];
+
+        Object.entries(summary.departmentStats).forEach(([dept, stats]) => {
+            summaryData.push([
+                dept,
+                stats.totalCheckins.toString(),
+                stats.averageTime,
+                stats.latestCheckin,
+            ]);
+        });
+
+        const response = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+                summarySheetName
+            )}!A1?valueInputOption=RAW`,
+            {
+                method: "PUT",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    values: summaryData,
+                }),
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`주간 결산 저장 실패: ${response.status}`);
+        }
+
+        console.log("주간 결산이 성공적으로 저장되었습니다.");
+    } catch (error) {
+        console.error("주간 결산 저장 오류:", error);
+        throw error;
+    }
+}
