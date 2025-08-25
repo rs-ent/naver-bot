@@ -207,7 +207,7 @@ export async function ensureHeaderExists(
         const checkResponse = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A1:U1`,
+            )}!A1:Z1`,
             {
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -231,7 +231,7 @@ export async function ensureHeaderExists(
                 const headerResponse = await fetch(
                     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                         sheetName
-                    )}!A1:U1?valueInputOption=RAW`,
+                    )}!A1:Z1?valueInputOption=RAW`,
                     {
                         method: "PUT",
                         headers: {
@@ -262,6 +262,10 @@ export async function ensureHeaderExists(
                                     "경도",
                                     "위치검증",
                                     "검증메모",
+                                    "지각여부",
+                                    "지각시간(분)",
+                                    "출근유형",
+                                    "비고",
                                 ],
                             ],
                         }),
@@ -354,11 +358,36 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
 
         // 지각 여부 판단
         let finalAction = attendanceData.action;
-        if (
-            isLateForWork(timestamp) &&
-            shouldMarkAsLate(attendanceData.action)
-        ) {
-            finalAction = "지각";
+        let isLate = false;
+        let lateMinutes = 0;
+        let attendanceType = "";
+        let notes = "";
+
+        if (isLateForWork(timestamp)) {
+            isLate = true;
+
+            // 한국 시간 기준으로 지각 시간 계산
+            const koreanTime = new Date(
+                timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
+            );
+            const standardTime = new Date(koreanTime);
+            standardTime.setHours(10, 0, 0, 0);
+            lateMinutes = Math.floor(
+                (koreanTime.getTime() - standardTime.getTime()) / (1000 * 60)
+            );
+
+            // 액션에 따른 출근 유형 분류
+            if (shouldMarkAsLate(attendanceData.action)) {
+                finalAction = "지각";
+                attendanceType = "일반출근";
+                notes = `지각 ${lateMinutes}분`;
+            } else {
+                attendanceType = "특별출근";
+                notes = `${attendanceData.action} (지각 ${lateMinutes}분)`;
+            }
+        } else {
+            attendanceType = "정시출근";
+            notes = "정시 출근";
         }
 
         // 시트에 기록할 데이터 준비
@@ -385,6 +414,10 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
                 attendanceData.locationInfo?.longitude || "",
                 attendanceData.locationInfo?.isVerified ? "검증됨" : "미검증",
                 attendanceData.locationInfo?.verificationNotes || "",
+                isLate ? "지각" : "정시",
+                lateMinutes,
+                attendanceType,
+                notes,
             ],
         ];
 
@@ -467,7 +500,7 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
         const response = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A${nextRow}:U${nextRow}?valueInputOption=RAW`,
+            )}!A${nextRow}:Z${nextRow}?valueInputOption=RAW`,
             {
                 method: "PUT",
                 headers: {
@@ -537,7 +570,7 @@ export async function getWeeklyAttendanceData(
         const response = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A:U`,
+            )}!A:Z`,
             {
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
