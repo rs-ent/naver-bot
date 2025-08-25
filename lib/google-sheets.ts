@@ -379,14 +379,14 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
             // 액션에 따른 출근 유형 분류
             if (shouldMarkAsLate(attendanceData.action)) {
                 finalAction = "지각";
-                attendanceType = "일반출근";
+                attendanceType = "일반";
                 notes = `지각 ${lateMinutes}분`;
             } else {
-                attendanceType = "특별출근";
+                attendanceType = "늦출";
                 notes = `${attendanceData.action} (지각 ${lateMinutes}분)`;
             }
         } else {
-            attendanceType = "정시출근";
+            attendanceType = "정시";
             notes = "정시 출근";
         }
 

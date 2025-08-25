@@ -524,7 +524,7 @@ export async function handleTextMessage(
                         type: "text",
                         text: `✅ ${
                             actionMap[text]
-                        }가 기록되었습니다!\n\n📊 출근 정보:\n• 시간: ${new Date(
+                        } 기록되었습니다!\n\n📊 출근 정보:\n• 시간: ${new Date(
                             data.issuedTime
                         ).toLocaleString("ko-KR", {
                             timeZone: "Asia/Seoul",
