@@ -309,6 +309,23 @@ export interface AttendanceData {
     };
 }
 
+// 한국 시간 기준 지각 여부 판단
+function isLateForWork(timestamp: Date): boolean {
+    const koreanTime = new Date(
+        timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
+    );
+    const hour = koreanTime.getHours();
+    const minute = koreanTime.getMinutes();
+
+    return hour > 10 || (hour === 10 && minute > 0);
+}
+
+// 액션에 따른 지각 여부 판단
+function shouldMarkAsLate(action: string): boolean {
+    const lateActions = ["늦출", "반차", "반반차", "외근"];
+    return !lateActions.includes(action);
+}
+
 // 구글 시트에 출근 기록 저장
 export async function saveToGoogleSheet(attendanceData: AttendanceData) {
     try {
@@ -335,6 +352,15 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
         // 원본 타임스탬프 (UTC 기준)
         const timestamp = new Date(attendanceData.timestamp);
 
+        // 지각 여부 판단
+        let finalAction = attendanceData.action;
+        if (
+            isLateForWork(timestamp) &&
+            shouldMarkAsLate(attendanceData.action)
+        ) {
+            finalAction = "지각";
+        }
+
         // 시트에 기록할 데이터 준비
         const values = [
             [
@@ -346,7 +372,7 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
                 userInfo.level,
                 userInfo.position,
                 userInfo.employeeNumber,
-                attendanceData.action,
+                finalAction,
                 attendanceData.domainId,
                 "네이버웍스 봇",
                 attendanceData.imageUrl || "",

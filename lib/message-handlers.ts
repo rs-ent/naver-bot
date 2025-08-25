@@ -216,6 +216,55 @@ export async function handleTextMessage(
 
             updateLastCheckinTime(userId);
 
+            // 시간 체크 및 지각 여부 판단
+            const timestamp = new Date(data.issuedTime);
+            const koreanTime = new Date(
+                timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
+            );
+            const hour = koreanTime.getHours();
+            const minute = koreanTime.getMinutes();
+            const isLate = hour > 10 || (hour === 10 && minute > 0);
+
+            if (isLate) {
+                // 지각인 경우 추가 옵션 버튼 표시
+                await sendMessage(
+                    userId,
+                    {
+                        content: {
+                            type: "text",
+                            text: "⏰ 오전 10시가 넘었습니다. 출근 유형을 선택해주세요:",
+                            quickReply: {
+                                items: [
+                                    {
+                                        action: {
+                                            type: "message",
+                                            label: "늦출/반차/반반차/외근",
+                                            text: "LATE_OPTIONS",
+                                        },
+                                    },
+                                    {
+                                        action: {
+                                            type: "message",
+                                            label: "지각",
+                                            text: "LATE_ARRIVAL",
+                                        },
+                                    },
+                                    {
+                                        action: {
+                                            type: "message",
+                                            label: "지각 + 늦출",
+                                            text: "LATE_AND_LATE_START",
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                    channelId
+                );
+                return;
+            }
+
             const userInfo = await getUserInfo(userId);
 
             const attendanceData: AttendanceData = {
@@ -291,6 +340,257 @@ export async function handleTextMessage(
                     content: {
                         type: "text",
                         text: "❌ 출근 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
+                    },
+                },
+                channelId
+            );
+        }
+        return;
+    }
+
+    // 지각 관련 버튼 메시지 처리
+    if (text === "LATE_OPTIONS") {
+        await sendMessage(
+            userId,
+            {
+                content: {
+                    type: "text",
+                    text: "출근 유형을 선택해주세요:",
+                    quickReply: {
+                        items: [
+                            {
+                                action: {
+                                    type: "message",
+                                    label: "늦출",
+                                    text: "LATE_START",
+                                },
+                            },
+                            {
+                                action: {
+                                    type: "message",
+                                    label: "반차",
+                                    text: "HALF_DAY",
+                                },
+                            },
+                            {
+                                action: {
+                                    type: "message",
+                                    label: "반반차",
+                                    text: "QUARTER_DAY",
+                                },
+                            },
+                            {
+                                action: {
+                                    type: "message",
+                                    label: "외근",
+                                    text: "BUSINESS_TRIP",
+                                },
+                            },
+                        ],
+                    },
+                },
+            },
+            channelId
+        );
+        return;
+    }
+
+    if (text === "LATE_ARRIVAL") {
+        try {
+            const cooldownCheck = checkCooldown(userId);
+            if (cooldownCheck.isInCooldown) {
+                await sendMessage(
+                    userId,
+                    {
+                        content: {
+                            type: "text",
+                            text: `⏰ 잠시 후 다시 눌러주세요.\n${cooldownCheck.remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
+                        },
+                    },
+                    channelId
+                );
+                return;
+            }
+
+            updateLastCheckinTime(userId);
+            const userInfo = await getUserInfo(userId);
+
+            const attendanceData: AttendanceData = {
+                userId,
+                domainId,
+                action: "지각",
+                timestamp: data.issuedTime,
+                userInfo,
+                requestInfo: requestInfo,
+            };
+
+            await saveToGoogleSheet(attendanceData);
+
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: `⏰ 지각이 기록되었습니다!\n\n📊 출근 정보:\n• 시간: ${new Date(
+                            data.issuedTime
+                        ).toLocaleString("ko-KR", {
+                            timeZone: "Asia/Seoul",
+                        })}\n• 이름: ${userInfo.name}\n• 부서: ${
+                            userInfo.department
+                        }\n\n구글 시트에 기록되었습니다! ✅`,
+                    },
+                },
+                channelId
+            );
+        } catch (error) {
+            console.error("지각 처리 오류:", error);
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: "❌ 지각 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
+                    },
+                },
+                channelId
+            );
+        }
+        return;
+    }
+
+    if (text === "LATE_AND_LATE_START") {
+        try {
+            const cooldownCheck = checkCooldown(userId);
+            if (cooldownCheck.isInCooldown) {
+                await sendMessage(
+                    userId,
+                    {
+                        content: {
+                            type: "text",
+                            text: `⏰ 잠시 후 다시 눌러주세요.\n${cooldownCheck.remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
+                        },
+                    },
+                    channelId
+                );
+                return;
+            }
+
+            updateLastCheckinTime(userId);
+            const userInfo = await getUserInfo(userId);
+
+            const attendanceData: AttendanceData = {
+                userId,
+                domainId,
+                action: "지각",
+                timestamp: data.issuedTime,
+                userInfo,
+                requestInfo: requestInfo,
+            };
+
+            await saveToGoogleSheet(attendanceData);
+
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: `⏰ 지각 + 늦출이 기록되었습니다!\n\n📊 출근 정보:\n• 시간: ${new Date(
+                            data.issuedTime
+                        ).toLocaleString("ko-KR", {
+                            timeZone: "Asia/Seoul",
+                        })}\n• 이름: ${userInfo.name}\n• 부서: ${
+                            userInfo.department
+                        }\n\n구글 시트에 기록되었습니다! ✅`,
+                    },
+                },
+                channelId
+            );
+        } catch (error) {
+            console.error("지각+늦출 처리 오류:", error);
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: "❌ 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
+                    },
+                },
+                channelId
+            );
+        }
+        return;
+    }
+
+    // 기존 지각 관련 버튼들 처리
+    if (
+        text === "LATE_START" ||
+        text === "HALF_DAY" ||
+        text === "QUARTER_DAY" ||
+        text === "BUSINESS_TRIP"
+    ) {
+        try {
+            const cooldownCheck = checkCooldown(userId);
+            if (cooldownCheck.isInCooldown) {
+                await sendMessage(
+                    userId,
+                    {
+                        content: {
+                            type: "text",
+                            text: `⏰ 잠시 후 다시 눌러주세요.\n${cooldownCheck.remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
+                        },
+                    },
+                    channelId
+                );
+                return;
+            }
+
+            updateLastCheckinTime(userId);
+            const userInfo = await getUserInfo(userId);
+
+            const actionMap: { [key: string]: string } = {
+                LATE_START: "늦출",
+                HALF_DAY: "반차",
+                QUARTER_DAY: "반반차",
+                BUSINESS_TRIP: "외근",
+            };
+
+            const attendanceData: AttendanceData = {
+                userId,
+                domainId,
+                action: actionMap[text],
+                timestamp: data.issuedTime,
+                userInfo,
+                requestInfo: requestInfo,
+            };
+
+            await saveToGoogleSheet(attendanceData);
+
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: `✅ ${
+                            actionMap[text]
+                        }가 기록되었습니다!\n\n📊 출근 정보:\n• 시간: ${new Date(
+                            data.issuedTime
+                        ).toLocaleString("ko-KR", {
+                            timeZone: "Asia/Seoul",
+                        })}\n• 이름: ${userInfo.name}\n• 부서: ${
+                            userInfo.department
+                        }\n\n구글 시트에 기록되었습니다! ✅`,
+                    },
+                },
+                channelId
+            );
+        } catch (error) {
+            console.error("늦출/반차/반반차/외근 처리 오류:", error);
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: "❌ 처리 중 오류가 발생했습니다.\n다시 시도해주세요.",
                     },
                 },
                 channelId
@@ -453,6 +753,55 @@ export async function handleLocationMessage(
         // 사용자 정보 조회
         const userInfo = await getUserInfo(userId);
 
+        // 시간 체크 및 지각 여부 판단
+        const timestamp = new Date(issuedTime);
+        const koreanTime = new Date(
+            timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
+        );
+        const hour = koreanTime.getHours();
+        const minute = koreanTime.getMinutes();
+        const isLate = hour > 10 || (hour === 10 && minute > 0);
+
+        if (isLate) {
+            // 지각인 경우 추가 옵션 버튼 표시
+            await sendMessage(
+                userId,
+                {
+                    content: {
+                        type: "text",
+                        text: "⏰ 오전 10시가 넘었습니다. 출근 유형을 선택해주세요:",
+                        quickReply: {
+                            items: [
+                                {
+                                    action: {
+                                        type: "message",
+                                        label: "늦출/반차/반반차/외근",
+                                        text: "LATE_OPTIONS",
+                                    },
+                                },
+                                {
+                                    action: {
+                                        type: "message",
+                                        label: "지각",
+                                        text: "LATE_ARRIVAL",
+                                    },
+                                },
+                                {
+                                    action: {
+                                        type: "message",
+                                        label: "지각 + 늦출",
+                                        text: "LATE_AND_LATE_START",
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                },
+                channelId
+            );
+            return;
+        }
+
         // 위치 검증 로직
         let isVerified = true;
         let verificationNotes = "";
@@ -605,6 +954,55 @@ export async function handlePostbackMessage(
             }
 
             updateLastCheckinTime(userId);
+
+            // 시간 체크 및 지각 여부 판단
+            const timestamp = new Date(issuedTime);
+            const koreanTime = new Date(
+                timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
+            );
+            const hour = koreanTime.getHours();
+            const minute = koreanTime.getMinutes();
+            const isLate = hour > 10 || (hour === 10 && minute > 0);
+
+            if (isLate) {
+                // 지각인 경우 추가 옵션 버튼 표시
+                await sendMessage(
+                    userId,
+                    {
+                        content: {
+                            type: "text",
+                            text: "⏰ 오전 10시가 넘었습니다. 출근 유형을 선택해주세요:",
+                            quickReply: {
+                                items: [
+                                    {
+                                        action: {
+                                            type: "message",
+                                            label: "늦출/반차/반반차/외근",
+                                            text: "LATE_OPTIONS",
+                                        },
+                                    },
+                                    {
+                                        action: {
+                                            type: "message",
+                                            label: "지각",
+                                            text: "LATE_ARRIVAL",
+                                        },
+                                    },
+                                    {
+                                        action: {
+                                            type: "message",
+                                            label: "지각 + 늦출",
+                                            text: "LATE_AND_LATE_START",
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                    channelId
+                );
+                return;
+            }
 
             const userInfo = await getUserInfo(userId);
 

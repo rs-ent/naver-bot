@@ -4,7 +4,7 @@ import {
     getGoogleAccessToken,
     generateWeeklySummary,
     saveWeeklySummaryToSheet,
-} from "../../../lib/google-sheets";
+} from "../../../../lib/google-sheets";
 
 export async function POST(request: NextRequest) {
     try {
