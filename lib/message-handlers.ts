@@ -397,22 +397,6 @@ export async function handleTextMessage(
 
     if (text === "LATE_ARRIVAL") {
         try {
-            const cooldownCheck = checkCooldown(userId);
-            if (cooldownCheck.isInCooldown) {
-                await sendMessage(
-                    userId,
-                    {
-                        content: {
-                            type: "text",
-                            text: `⏰ 잠시 후 다시 눌러주세요.\n${cooldownCheck.remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
-                        },
-                    },
-                    channelId
-                );
-                return;
-            }
-
-            updateLastCheckinTime(userId);
             const userInfo = await getUserInfo(userId);
 
             const attendanceData: AttendanceData = {
@@ -460,22 +444,6 @@ export async function handleTextMessage(
 
     if (text === "LATE_AND_LATE_START") {
         try {
-            const cooldownCheck = checkCooldown(userId);
-            if (cooldownCheck.isInCooldown) {
-                await sendMessage(
-                    userId,
-                    {
-                        content: {
-                            type: "text",
-                            text: `⏰ 잠시 후 다시 눌러주세요.\n${cooldownCheck.remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
-                        },
-                    },
-                    channelId
-                );
-                return;
-            }
-
-            updateLastCheckinTime(userId);
             const userInfo = await getUserInfo(userId);
 
             const attendanceData: AttendanceData = {
@@ -529,22 +497,6 @@ export async function handleTextMessage(
         text === "BUSINESS_TRIP"
     ) {
         try {
-            const cooldownCheck = checkCooldown(userId);
-            if (cooldownCheck.isInCooldown) {
-                await sendMessage(
-                    userId,
-                    {
-                        content: {
-                            type: "text",
-                            text: `⏰ 잠시 후 다시 눌러주세요.\n${cooldownCheck.remainingSeconds}초 후에 다시 시도할 수 있습니다.`,
-                        },
-                    },
-                    channelId
-                );
-                return;
-            }
-
-            updateLastCheckinTime(userId);
             const userInfo = await getUserInfo(userId);
 
             const actionMap: { [key: string]: string } = {
