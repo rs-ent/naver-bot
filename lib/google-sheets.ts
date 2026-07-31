@@ -1,5 +1,37 @@
 import crypto from "crypto";
 import { RequestInfo } from "./webhook";
+import {
+    getKoreanDateString,
+    getLateMinutes,
+    isLateForWork,
+} from "./work-schedule";
+
+// 출근하기는 눌렀지만 절차(위치 인증 / 출근 유형 선택)를 끝내지 않은 상태.
+// 이 행은 "출근 절차를 진행 중"이라는 표식으로도 쓰인다.
+export const PENDING_ACTION = "미기록";
+
+// 출근 절차를 끝까지 마친 것으로 인정하는 액션들 (미기록은 포함하지 않는다)
+const COMPLETED_ACTIONS = [
+    "출근",
+    "위치출근",
+    "지각",
+    "늦출",
+    "반차",
+    "반반차",
+    "외근",
+];
+
+// 시트 컬럼 인덱스
+const COL_TIMESTAMP = 0;
+const COL_NAME = 2;
+const COL_EMAIL = 3;
+const COL_ACTION = 8;
+
+// 네이버웍스는 이름을 "성 이름"(예: "이 성환") 형태로 주므로
+// 비교할 때는 공백을 모두 제거한 뒤 대조한다.
+export function normalizeName(name: string | undefined): string {
+    return (name || "").replace(/\s+/g, "");
+}
 
 // 구글 시트 ID 추출 함수
 export function extractSheetId(url: string | undefined): string {
@@ -97,8 +129,16 @@ export function createJWT(serviceAccount: any): string {
     }
 }
 
+// Google Access Token 캐시 (토큰 유효기간 1시간, 여유를 두고 55분간 재사용)
+let cachedGoogleToken: string | null = null;
+let googleTokenExpiresAt = 0;
+
 // Google Access Token 획득
 export async function getGoogleAccessToken(): Promise<string> {
+    if (cachedGoogleToken && Date.now() < googleTokenExpiresAt) {
+        return cachedGoogleToken;
+    }
+
     try {
         // 필수 환경변수 확인
         const requiredEnvs = [
@@ -187,6 +227,10 @@ export async function getGoogleAccessToken(): Promise<string> {
 
         const data = await response.json();
         console.log("Google Access Token 발급 성공");
+
+        cachedGoogleToken = data.access_token;
+        googleTokenExpiresAt = Date.now() + 55 * 60 * 1000;
+
         return data.access_token;
     } catch (error) {
         console.error("Google Access Token 발급 오류:", error);
@@ -313,25 +357,243 @@ export interface AttendanceData {
     };
 }
 
-// 한국 시간 기준 지각 여부 판단
-function isLateForWork(timestamp: Date): boolean {
-    const koreanTime = new Date(
-        timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
-    );
-    const hour = koreanTime.getHours();
-    const minute = koreanTime.getMinutes();
-
-    return hour > 10 || (hour === 10 && minute > 0);
-}
-
 // 액션에 따른 지각 여부 판단
 function shouldMarkAsLate(action: string): boolean {
     const lateActions = ["늦출", "반차", "반반차", "외근"];
     return !lateActions.includes(action);
 }
 
+// 사용자 식별 정보 (시트에는 userId가 없어 이메일/이름으로 대조한다)
+interface SheetIdentity {
+    name?: string;
+    email?: string;
+}
+
+// 시트의 한 행이 해당 사용자의 기록인지 판단
+function matchesIdentity(row: any[], identity: SheetIdentity): boolean {
+    const email = (identity.email || "").trim();
+    if (email.includes("@")) {
+        return (row[COL_EMAIL] || "").trim() === email;
+    }
+
+    // 이메일을 못 가져온 경우에만 이름으로 대조 (기본값 문자열은 제외)
+    const name = normalizeName(identity.name);
+    if (!name || name === "정보없음") return false;
+    return normalizeName(row[COL_NAME]) === name;
+}
+
+// 시트 전체를 읽어 데이터 행(헤더 제외)과 각 행의 실제 행 번호를 반환
+async function readSheetRows(
+    sheetId: string,
+    sheetName: string,
+    accessToken: string
+): Promise<{ row: any[]; rowNumber: number }[]> {
+    const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+            sheetName
+        )}!A:Z`,
+        {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+            },
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(`Google Sheets API 오류: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.values || data.values.length < 2) return [];
+
+    // values[0]은 헤더(1행)이므로 데이터는 인덱스 1부터, 행 번호는 인덱스 + 1
+    return data.values
+        .slice(1)
+        .map((row: any[], index: number) => ({ row, rowNumber: index + 2 }));
+}
+
+// 오늘(한국 시간 기준) 해당 사용자의 기록 상태
+export interface TodayAttendanceStatus {
+    // 진행 중인 "미기록" 행 번호 (출근하기를 눌렀다는 표식)
+    pendingRow: number | null;
+    // 출근 절차를 끝까지 마친 기록이 있는지
+    hasCompletedRecord: boolean;
+    // 완료된 기록의 액션 (예: "지각", "위치출근")
+    completedAction: string;
+    // 완료된 기록의 한국 시간 문자열
+    completedTime: string;
+}
+
+async function findTodayAttendance(
+    sheetId: string,
+    sheetName: string,
+    accessToken: string,
+    identity: SheetIdentity,
+    timestamp: Date
+): Promise<TodayAttendanceStatus> {
+    const today = getKoreanDateString(timestamp);
+    const status: TodayAttendanceStatus = {
+        pendingRow: null,
+        hasCompletedRecord: false,
+        completedAction: "",
+        completedTime: "",
+    };
+
+    const rows = await readSheetRows(sheetId, sheetName, accessToken);
+
+    for (const { row, rowNumber } of rows) {
+        if (!row[COL_TIMESTAMP]) continue;
+
+        const rowDate = new Date(row[COL_TIMESTAMP]);
+        if (isNaN(rowDate.getTime())) continue;
+        if (getKoreanDateString(rowDate) !== today) continue;
+        if (!matchesIdentity(row, identity)) continue;
+
+        const action = (row[COL_ACTION] || "").trim();
+        if (action === PENDING_ACTION) {
+            status.pendingRow = rowNumber; // 가장 마지막 미기록 행을 사용
+        } else if (COMPLETED_ACTIONS.includes(action)) {
+            status.hasCompletedRecord = true;
+            status.completedAction = action;
+            status.completedTime = (row[1] || "").trim();
+        }
+    }
+
+    return status;
+}
+
+// 오늘 해당 사용자의 기록 상태 조회 (시트 접근 정보를 내부에서 해결)
+export async function getTodayAttendanceStatus(
+    identity: SheetIdentity,
+    timestamp: Date = new Date()
+): Promise<TodayAttendanceStatus> {
+    const sheetId = extractSheetId(process.env.GOOGLE_SHEET_URL);
+    if (!sheetId) {
+        throw new Error("구글 시트 ID를 추출할 수 없습니다.");
+    }
+
+    const accessToken = await getGoogleAccessToken();
+    const sheetName = await resolveSheetName(sheetId, accessToken);
+
+    return findTodayAttendance(
+        sheetId,
+        sheetName,
+        accessToken,
+        identity,
+        timestamp
+    );
+}
+
+// 오늘(한국 시간 기준) 출근 절차를 끝까지 마친 사람들의 이메일/이름 집합
+// "미기록"(절차 미완료)은 찍지 않은 것으로 본다.
+export async function getTodayCheckedInIdentities(
+    sheetId: string,
+    sheetName: string,
+    accessToken: string,
+    timestamp: Date = new Date()
+): Promise<{ emails: Set<string>; names: Set<string> }> {
+    const today = getKoreanDateString(timestamp);
+    const emails = new Set<string>();
+    const names = new Set<string>();
+
+    const rows = await readSheetRows(sheetId, sheetName, accessToken);
+
+    for (const { row } of rows) {
+        if (!row[COL_TIMESTAMP]) continue;
+
+        const rowDate = new Date(row[COL_TIMESTAMP]);
+        if (isNaN(rowDate.getTime())) continue;
+        if (getKoreanDateString(rowDate) !== today) continue;
+
+        const action = (row[COL_ACTION] || "").trim();
+        if (!COMPLETED_ACTIONS.includes(action)) continue;
+
+        const email = (row[COL_EMAIL] || "").trim();
+        if (email.includes("@")) emails.add(email);
+
+        const name = normalizeName(row[COL_NAME]);
+        if (name && name !== "정보없음") names.add(name);
+    }
+
+    return { emails, names };
+}
+
+// 시트 이름 캐시 (시트 이름은 실행 중 바뀌지 않는다)
+let cachedSheetName: string | null = null;
+
+// GOOGLE_SHEET_WORKSHEET 값(시트 이름 또는 인덱스)을 실제 시트 이름으로 변환
+export async function resolveSheetName(
+    sheetId: string,
+    accessToken: string
+): Promise<string> {
+    if (cachedSheetName) return cachedSheetName;
+
+    const worksheet = process.env.GOOGLE_SHEET_WORKSHEET || "0";
+    let sheetName = "Sheet1"; // 기본값
+
+    // 숫자인 경우 인덱스로 판단하여 시트 정보 조회
+    if (/^\d+$/.test(worksheet)) {
+        try {
+            console.log(
+                `시트 인덱스 ${worksheet}에 해당하는 시트 이름 조회 중...`
+            );
+
+            // 스프레드시트 메타데이터 조회
+            const metaResponse = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                    },
+                }
+            );
+
+            if (metaResponse.ok) {
+                const metadata = await metaResponse.json();
+                const sheets = metadata.sheets;
+                const sheetIndex = parseInt(worksheet);
+
+                if (sheets && sheets[sheetIndex]) {
+                    sheetName = sheets[sheetIndex].properties.title;
+                    console.log(
+                        `인덱스 ${sheetIndex}의 시트 이름: ${sheetName}`
+                    );
+                } else {
+                    console.log(
+                        `인덱스 ${sheetIndex}에 해당하는 시트가 없음. 기본값 사용: ${sheetName}`
+                    );
+                }
+            } else {
+                console.log("시트 메타데이터 조회 실패. 기본값 사용");
+            }
+        } catch (metaError) {
+            console.log("시트 이름 조회 오류:", metaError);
+            console.log("기본값 사용:", sheetName);
+        }
+    } else {
+        // 문자열인 경우 시트 이름으로 직접 사용
+        sheetName = worksheet;
+    }
+
+    cachedSheetName = sheetName;
+    return sheetName;
+}
+
+// 출근 기록 저장 옵션
+export interface SaveAttendanceOptions {
+    // 덮어쓸 행 번호를 이미 알고 있는 경우 (시트 재조회를 생략한다)
+    targetRow?: number | null;
+    // 오늘자 "미기록" 행이 있으면 새 행을 만들지 않고 그 행을 덮어쓴다
+    replacePendingRow?: boolean;
+    // 오늘 이미 확정된 출근 기록이 있으면 저장하지 않는다
+    skipIfAlreadyRecorded?: boolean;
+}
+
 // 구글 시트에 출근 기록 저장
-export async function saveToGoogleSheet(attendanceData: AttendanceData) {
+export async function saveToGoogleSheet(
+    attendanceData: AttendanceData,
+    options: SaveAttendanceOptions = {}
+) {
     try {
         console.log("=== Google Service Account 인증 시작 ===");
 
@@ -366,18 +628,15 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
         if (isLateForWork(timestamp)) {
             isLate = true;
 
-            // 한국 시간 기준으로 지각 시간 계산
-            const koreanTime = new Date(
-                timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
-            );
-            const standardTime = new Date(koreanTime);
-            standardTime.setHours(10, 0, 0, 0);
-            lateMinutes = Math.floor(
-                (koreanTime.getTime() - standardTime.getTime()) / (1000 * 60)
-            );
+            // 한국 시간 기준으로 지각 시간 계산 (요일별 기준 시각 적용)
+            lateMinutes = getLateMinutes(timestamp);
 
             // 액션에 따른 출근 유형 분류
-            if (shouldMarkAsLate(attendanceData.action)) {
+            if (attendanceData.action === PENDING_ACTION) {
+                // 출근 버튼만 누르고 유형을 고르지 않은 상태
+                attendanceType = "미분류";
+                notes = `지각 ${lateMinutes}분 (출근 유형 미선택)`;
+            } else if (shouldMarkAsLate(attendanceData.action)) {
                 finalAction = "지각";
                 attendanceType = "일반";
                 notes = `지각 ${lateMinutes}분`;
@@ -422,85 +681,78 @@ export async function saveToGoogleSheet(attendanceData: AttendanceData) {
         ];
 
         // 시트 이름 또는 인덱스 처리
-        const worksheet = process.env.GOOGLE_SHEET_WORKSHEET || "0";
-        let sheetName = "Sheet1"; // 기본값
-
-        // 숫자인 경우 인덱스로 판단하여 시트 정보 조회
-        if (/^\d+$/.test(worksheet)) {
-            try {
-                console.log(
-                    `시트 인덱스 ${worksheet}에 해당하는 시트 이름 조회 중...`
-                );
-
-                // 스프레드시트 메타데이터 조회
-                const metaResponse = await fetch(
-                    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties`,
-                    {
-                        headers: {
-                            Authorization: `Bearer ${accessToken}`,
-                        },
-                    }
-                );
-
-                if (metaResponse.ok) {
-                    const metadata = await metaResponse.json();
-                    const sheets = metadata.sheets;
-                    const sheetIndex = parseInt(worksheet);
-
-                    if (sheets && sheets[sheetIndex]) {
-                        sheetName = sheets[sheetIndex].properties.title;
-                        console.log(
-                            `인덱스 ${sheetIndex}의 시트 이름: ${sheetName}`
-                        );
-                    } else {
-                        console.log(
-                            `인덱스 ${sheetIndex}에 해당하는 시트가 없음. 기본값 사용: ${sheetName}`
-                        );
-                    }
-                } else {
-                    console.log("시트 메타데이터 조회 실패. 기본값 사용");
-                }
-            } catch (metaError) {
-                console.log("시트 이름 조회 오류:", metaError);
-                console.log("기본값 사용:", sheetName);
-            }
-        } else {
-            // 문자열인 경우 시트 이름으로 직접 사용
-            sheetName = worksheet;
-        }
+        const sheetName = await resolveSheetName(sheetId, accessToken);
 
         console.log(`사용할 시트 이름: ${sheetName}`);
 
         // 헤더 확인 및 추가
         await ensureHeaderExists(sheetId, sheetName, accessToken);
 
-        // 다음 빈 행 찾기
-        const findResponse = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
-                sheetName
-            )}!A:A`,
-            {
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                },
-            }
-        );
+        // 기록할 행 결정. 호출부가 행 번호를 알려준 경우 시트를 다시 읽지 않는다.
+        let targetRow: number | null = options.targetRow ?? null;
 
-        let nextRow = 2; // 기본값: 헤더 다음 행
-        if (findResponse.ok) {
-            const findData = await findResponse.json();
-            if (findData.values) {
-                nextRow = findData.values.length + 1;
+        if (
+            !targetRow &&
+            (options.replacePendingRow || options.skipIfAlreadyRecorded)
+        ) {
+            try {
+                const todayStatus = await findTodayAttendance(
+                    sheetId,
+                    sheetName,
+                    accessToken,
+                    { name: userInfo.name, email: userInfo.email },
+                    timestamp
+                );
+
+                if (
+                    options.skipIfAlreadyRecorded &&
+                    todayStatus.hasCompletedRecord
+                ) {
+                    console.log("오늘 이미 출근 기록이 있어 저장을 건너뜁니다.");
+                    return { skipped: true };
+                }
+
+                if (options.replacePendingRow && todayStatus.pendingRow) {
+                    targetRow = todayStatus.pendingRow;
+                    console.log(`미기록 행 ${targetRow}을(를) 갱신합니다.`);
+                }
+            } catch (lookupError) {
+                // 조회에 실패해도 기록 자체는 남겨야 하므로 새 행 추가로 진행
+                console.warn(
+                    "오늘자 기록 조회 실패, 새 행으로 저장:",
+                    lookupError
+                );
             }
         }
 
-        console.log(`다음 빈 행: ${nextRow}`);
+        if (!targetRow) {
+            const findResponse = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
+                    sheetName
+                )}!A:A`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                    },
+                }
+            );
+
+            targetRow = 2; // 기본값: 헤더 다음 행
+            if (findResponse.ok) {
+                const findData = await findResponse.json();
+                if (findData.values) {
+                    targetRow = findData.values.length + 1;
+                }
+            }
+
+            console.log(`다음 빈 행: ${targetRow}`);
+        }
 
         // Google Sheets API 호출 - 명시적 범위 지정
         const response = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
                 sheetName
-            )}!A${nextRow}:Z${nextRow}?valueInputOption=RAW`,
+            )}!A${targetRow}:Z${targetRow}?valueInputOption=RAW`,
             {
                 method: "PUT",
                 headers: {
