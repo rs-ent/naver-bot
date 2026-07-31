@@ -24,6 +24,19 @@ const DEFAULT_EXCLUDED_NAMES = [
     "이상진",
     "박대은",
     "조현곤",
+    "김주화",
+];
+
+// 명단에 표시할 순서. 여기에 없는 사람은 뒤쪽에 이름순으로 붙는다.
+const MEMBER_ORDER = [
+    "이찬주",
+    "김하빈",
+    "차동훈",
+    "허청",
+    "김민정",
+    "이수빈",
+    "박현진",
+    "홍유정",
 ];
 
 // 네이버웍스 메시지 1건당 멘션 가능 인원 상한
@@ -80,6 +93,22 @@ function parseList(value: string | undefined): string[] {
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+}
+
+// MEMBER_ORDER 기준 정렬 순위. 목록에 없으면 맨 뒤로 보낸다.
+function getMemberRank(name: string): number {
+    const index = MEMBER_ORDER.indexOf(normalizeName(name));
+    return index === -1 ? MEMBER_ORDER.length : index;
+}
+
+// 지정한 계층 순서대로 정렬 (목록에 없는 사람은 뒤쪽에 이름순)
+function sortByMemberOrder(targets: NoticeTarget[]): NoticeTarget[] {
+    return [...targets].sort((a, b) => {
+        const rankDiff = getMemberRank(a.name) - getMemberRank(b.name);
+        if (rankDiff !== 0) return rankDiff;
+
+        return normalizeName(a.name).localeCompare(normalizeName(b.name), "ko");
+    });
 }
 
 // 알림 대상에서 제외할 이름 집합
@@ -157,10 +186,12 @@ async function findMissingMembers(
             !excludedNames.has(normalizeName(info.name))
     );
 
-    // 6. 미체크 인원 추출
-    const missing: NoticeTarget[] = candidates
-        .filter(({ info }) => !checkedIn.emails.has((info.email || "").trim()))
-        .map(({ userId, info }) => ({ userId, name: info.name }));
+    // 6. 미체크 인원 추출 후 지정된 계층 순서로 정렬
+    const missing = sortByMemberOrder(
+        candidates
+            .filter(({ info }) => !checkedIn.emails.has((info.email || "").trim()))
+            .map(({ userId, info }) => ({ userId, name: info.name }))
+    );
 
     return {
         missing,
@@ -199,7 +230,7 @@ function buildReportMessage(missing: NoticeTarget[], now: Date): string {
     return (
         `⏰ ${date} 지각/휴무 인원 (${missing.length}명)\n` +
         // 네이버웍스가 "홍 유정"처럼 공백을 넣어 주므로 표시할 때는 붙인다
-        missing.map((target) => `・${normalizeName(target.name)}`).join("\n")
+        missing.map((target) => normalizeName(target.name)).join(", ")
     );
 }
 

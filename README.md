@@ -33,10 +33,12 @@
 | 출근 시각 정각 | 멘션 없이 명단만 공지. 전원 완료 시에도 공지        |
 
 ```
-⏰ 7/31 지각/휴무 인원 (2명)
-・차동훈
-・홍유정
+⏰ 7/31 지각/휴무 인원 (3명)
+이찬주, 김하빈, 박현진
 ```
+
+명단 순서는 [`lib/attendance-reminder.ts`](lib/attendance-reminder.ts)의 `MEMBER_ORDER`를 따릅니다.
+목록에 없는 사람은 뒤쪽에 이름순으로 붙습니다.
 
 - **면제 인원**: [`lib/attendance-reminder.ts`](lib/attendance-reminder.ts)의 `DEFAULT_EXCLUDED_NAMES`에서 관리
 - **자동 제외**: 주말과 `ATTENDANCE_HOLIDAYS`에 등록한 공휴일에는 전송하지 않음
