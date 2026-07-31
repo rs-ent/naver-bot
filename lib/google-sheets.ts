@@ -579,6 +579,31 @@ export async function resolveSheetName(
     return sheetName;
 }
 
+// 시트에 값 쓰기 (실패 시 예외)
+async function writeValues(
+    url: string,
+    method: "PUT" | "POST",
+    accessToken: string,
+    values: any[][]
+) {
+    const response = await fetch(url, {
+        method,
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ values }),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Google Sheets API 오류:", response.status, errorText);
+        throw new Error(`Google Sheets API 오류: ${response.status}`);
+    }
+
+    return response.json();
+}
+
 // 출근 기록 저장 옵션
 export interface SaveAttendanceOptions {
     // 덮어쓸 행 번호를 이미 알고 있는 경우 (시트 재조회를 생략한다)
@@ -725,58 +750,65 @@ export async function saveToGoogleSheet(
             }
         }
 
-        if (!targetRow) {
-            const findResponse = await fetch(
-                `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
-                    sheetName
-                )}!A:A`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                    },
-                }
+        const range = encodeURIComponent(sheetName);
+        const baseUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values`;
+
+        // 갱신할 행이 정해진 경우 (미기록 행 갱신 등) 그 행만 덮어쓴다
+        if (targetRow) {
+            console.log(`${targetRow}행 갱신`);
+            const result = await writeValues(
+                `${baseUrl}/${range}!A${targetRow}:Z${targetRow}?valueInputOption=RAW`,
+                "PUT",
+                accessToken,
+                values
             );
-
-            targetRow = 2; // 기본값: 헤더 다음 행
-            if (findResponse.ok) {
-                const findData = await findResponse.json();
-                if (findData.values) {
-                    targetRow = findData.values.length + 1;
-                }
-            }
-
-            console.log(`다음 빈 행: ${targetRow}`);
+            console.log("구글 시트 기록 성공");
+            return result;
         }
 
-        // Google Sheets API 호출 - 명시적 범위 지정
-        const response = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
-                sheetName
-            )}!A${targetRow}:Z${targetRow}?valueInputOption=RAW`,
-            {
-                method: "PUT",
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    values: values,
-                }),
-            }
-        );
-
-        if (!response.ok) {
-            const errorText = await response.text();
+        // 새 행 추가에는 append를 쓴다.
+        // 예전처럼 "마지막 행을 조회해 그 다음 행에 쓰는" 방식은 두 사람이
+        // 동시에 출근을 찍으면 같은 행 번호를 계산해 한쪽 기록이 지워진다.
+        // append + INSERT_ROWS는 구글 쪽에서 행을 잡아 주므로 겹치지 않는다.
+        try {
+            const result = await writeValues(
+                `${baseUrl}/${range}!A:Z:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+                "POST",
+                accessToken,
+                values
+            );
+            console.log("구글 시트 기록 성공 (append)");
+            return result;
+        } catch (appendError) {
+            // append가 실패하더라도 출근 기록은 반드시 남아야 하므로
+            // 예전 방식으로 한 번 더 시도한다.
             console.error(
-                "Google Sheets API 오류:",
-                response.status,
-                errorText
+                "append 실패, 마지막 행 계산 방식으로 대체:",
+                appendError
             );
-            throw new Error(`Google Sheets API 오류: ${response.status}`);
         }
 
-        const result = await response.json();
-        console.log("구글 시트 기록 성공:", result);
+        const findResponse = await fetch(`${baseUrl}/${range}!A:A`, {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+            },
+        });
+
+        let fallbackRow = 2; // 기본값: 헤더 다음 행
+        if (findResponse.ok) {
+            const findData = await findResponse.json();
+            if (findData.values) {
+                fallbackRow = findData.values.length + 1;
+            }
+        }
+
+        const result = await writeValues(
+            `${baseUrl}/${range}!A${fallbackRow}:Z${fallbackRow}?valueInputOption=RAW`,
+            "PUT",
+            accessToken,
+            values
+        );
+        console.log(`구글 시트 기록 성공 (대체 경로, ${fallbackRow}행)`);
         return result;
     } catch (error) {
         console.error("구글 시트 저장 오류:", error);
