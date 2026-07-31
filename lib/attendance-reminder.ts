@@ -224,11 +224,11 @@ function buildReportMessage(missing: NoticeTarget[], now: Date): string {
     const date = formatKoreanMonthDay(now);
 
     if (missing.length === 0) {
-        return `⏰ ${date} 지각/휴무 인원 (0명)\n\n🎉 전원 출근 완료했습니다!`;
+        return `⏰ ${date} 휴무/지각 인원 (0명)\n\n🎉 전원 출근 완료했습니다!`;
     }
 
     return (
-        `⏰ ${date} 지각/휴무 인원 (${missing.length}명)\n` +
+        `⏰ ${date} 휴무/지각 인원 (${missing.length}명)\n` +
         // 네이버웍스가 "홍 유정"처럼 공백을 넣어 주므로 표시할 때는 붙인다
         missing.map((target) => normalizeName(target.name)).join(", ")
     );
