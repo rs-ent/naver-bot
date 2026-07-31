@@ -53,6 +53,8 @@ export interface NoticeResult {
     checkedInCount: number;
     missing: NoticeTarget[];
     sent: boolean;
+    // 전송하지 않은 경우의 사유
+    skipped?: string;
     message?: string;
 }
 
@@ -99,6 +101,8 @@ async function findMissingMembers(
     totalMembers: number;
     excludedCount: number;
     unresolved: string[];
+    // 오늘 출근을 찍은 전체 인원 수 (면제 대상 포함, 휴무일 판단에 사용)
+    checkedInToday: number;
 }> {
     // 1. 메시지방 구성원 조회
     const memberIds = await getChannelMembers(channelId);
@@ -163,6 +167,7 @@ async function findMissingMembers(
         totalMembers: memberIds.length,
         excludedCount: identified.length - candidates.length,
         unresolved,
+        checkedInToday: checkedIn.emails.size,
     };
 }
 
@@ -223,7 +228,7 @@ export async function sendAttendanceNotice(
         DEFAULT_REMINDER_CHANNEL_ID;
 
     const now = new Date();
-    const { missing, totalMembers, excludedCount, unresolved } =
+    const { missing, totalMembers, excludedCount, unresolved, checkedInToday } =
         await findMissingMembers(channelId, now);
 
     const result: NoticeResult = {
@@ -239,10 +244,19 @@ export async function sendAttendanceNotice(
         sent: false,
     };
 
+    // 아무도 출근을 찍지 않았다면 회사 전체 휴무일로 보고 두 알림 모두 보내지 않는다.
+    // 공휴일 목록을 따로 관리하지 않아도 대체공휴일·창립기념일 등이 자동으로 걸러진다.
+    if (checkedInToday === 0) {
+        console.log("오늘 출근 기록이 한 건도 없어 휴무일로 판단, 알림 생략");
+        result.skipped = "출근 기록이 한 건도 없어 휴무일로 판단했습니다.";
+        return result;
+    }
+
     // 독촉 알림은 대상이 없으면 아무것도 보내지 않는다.
     // 정각 현황 공지는 "전원 완료"도 알릴 가치가 있어 항상 보낸다.
     if (mode === "mention" && missing.length === 0) {
         console.log("미체크 인원이 없어 독촉 알림을 보내지 않습니다.");
+        result.skipped = "미체크 인원이 없습니다.";
         return result;
     }
 
