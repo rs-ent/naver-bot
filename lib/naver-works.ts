@@ -89,6 +89,56 @@ export async function getUserInfo(userId: string): Promise<UserInfo> {
     }
 }
 
+// 봇이 참여한 메시지방의 구성원 userId 목록 조회
+// https://developers.worksmobile.com/kr/docs/bot-channel-member-list
+export async function getChannelMembers(channelId: string): Promise<string[]> {
+    const accessToken = await getAccessToken();
+    const members: string[] = [];
+
+    let cursor: string | undefined;
+    // 페이지네이션 (안전장치로 최대 20페이지 = 2000명)
+    for (let page = 0; page < 20; page++) {
+        const url = new URL(
+            `${process.env.NAVER_WORKS_API_URL}/bots/${process.env.NAVER_WORKS_BOT_ID}/channels/${channelId}/members`
+        );
+        url.searchParams.set("count", "100");
+        if (cursor) url.searchParams.set("cursor", cursor);
+
+        const response = await fetch(url.toString(), {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+            },
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(
+                "채널 멤버 조회 실패:",
+                response.status,
+                errorText
+            );
+            throw new Error(`채널 멤버 조회 실패: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 문자열 배열로 오지만, 객체 형태로 올 경우도 방어적으로 처리
+        const pageMembers = (data.members || [])
+            .map((member: any) =>
+                typeof member === "string" ? member : member?.userId
+            )
+            .filter(Boolean);
+
+        members.push(...pageMembers);
+
+        cursor = data.responseMetaData?.nextCursor;
+        if (!cursor) break;
+    }
+
+    console.log(`채널 멤버 ${members.length}명 조회 완료`);
+    return members;
+}
+
 // 네이버웍스로 메시지 전송
 export async function sendMessage(
     userId: string,

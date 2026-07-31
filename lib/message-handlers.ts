@@ -10,8 +10,15 @@ import {
     createPersistentMenu,
     deletePersistentMenu,
     downloadImage,
+    UserInfo,
 } from "./naver-works";
-import { saveToGoogleSheet, AttendanceData } from "./google-sheets";
+import {
+    saveToGoogleSheet,
+    getTodayAttendanceStatus,
+    AttendanceData,
+    PENDING_ACTION,
+} from "./google-sheets";
+import { formatWorkStartTime, isLateForWork } from "./work-schedule";
 import {
     saveImageToBlob,
     validateImageBuffer,
@@ -19,6 +26,131 @@ import {
 } from "./image-processing";
 
 const userLastCheckinTime = new Map<string, number>();
+
+// 지각 시 보여주는 출근 유형 선택 버튼
+const LATE_QUICK_REPLY_ITEMS = [
+    {
+        action: {
+            type: "message",
+            label: "늦출/반차/반반차/외근",
+            text: "LATE_OPTIONS",
+        },
+    },
+    {
+        action: {
+            type: "message",
+            label: "지각",
+            text: "LATE_ARRIVAL",
+        },
+    },
+    {
+        action: {
+            type: "message",
+            label: "지각 + 늦출",
+            text: "LATE_AND_LATE_START",
+        },
+    },
+];
+
+// 출근 절차 진행 여부 확인 결과
+// 단체 메시지방에서는 버튼이 모두에게 보이므로, '출근하기'를 누른 본인인지 확인해야 한다.
+type SessionCheck =
+    | { ok: true; targetRow: number | null }
+    | { ok: false };
+
+// '출근하기'를 눌러 진행 중인 절차가 있는지 확인한다.
+// 진행 중이 아니면 안내 메시지를 보내고 절차를 중단시킨다.
+async function requireCheckinSession(
+    data: WebhookData,
+    userInfo: UserInfo
+): Promise<SessionCheck> {
+    const { userId, channelId } = data.source;
+
+    let status;
+    try {
+        status = await getTodayAttendanceStatus(
+            { name: userInfo.name, email: userInfo.email },
+            new Date(data.issuedTime)
+        );
+    } catch (error) {
+        // 시트 조회가 실패하면 출근 자체를 막지 않는다 (기존 동작 우선)
+        console.error("출근 절차 확인 실패, 검증 없이 진행:", error);
+        return { ok: true, targetRow: null };
+    }
+
+    // 진행 중인 미기록 행이 있으면 본인이 시작한 절차다
+    if (status.pendingRow) {
+        return { ok: true, targetRow: status.pendingRow };
+    }
+
+    const text = status.hasCompletedRecord
+        ? `✅ ${userInfo.name}님은 오늘 이미 '${status.completedAction}'(으)로 기록되어 있습니다.\n` +
+          `• 기록 시간: ${status.completedTime}\n\n` +
+          "수정이 필요하면 관리자에게 문의해주세요."
+        : `⚠️ ${userInfo.name}님, 먼저 하단의 '출근하기' 버튼을 눌러주세요.\n\n` +
+          "다른 분이 진행 중인 출근 절차의 버튼은 사용할 수 없습니다.";
+
+    await sendMessage(userId, { content: { type: "text", text } }, channelId);
+
+    return { ok: false };
+}
+
+// 지각 시간대에 출근을 시도한 경우의 처리
+// 유형을 고르지 않고 이탈해도 흔적이 남도록 "미기록" 상태를 유지한 채 선택 버튼을 띄운다.
+async function handleLateCheckin(
+    data: WebhookData,
+    requestInfo?: RequestInfo,
+    extra?: {
+        userInfo?: UserInfo;
+        locationInfo?: AttendanceData["locationInfo"];
+        targetRow?: number | null;
+    }
+): Promise<void> {
+    const { userId, channelId, domainId } = data.source;
+    const timestamp = new Date(data.issuedTime);
+
+    try {
+        const userInfo = extra?.userInfo || (await getUserInfo(userId));
+
+        // 위치 정보 등 이번 단계에서 얻은 내용을 미기록 행에 반영해 둔다
+        await saveToGoogleSheet(
+            {
+                userId,
+                domainId,
+                action: PENDING_ACTION,
+                timestamp: data.issuedTime,
+                userInfo,
+                requestInfo,
+                locationInfo: extra?.locationInfo,
+            },
+            {
+                targetRow: extra?.targetRow,
+                replacePendingRow: true,
+                skipIfAlreadyRecorded: true,
+            }
+        );
+    } catch (error) {
+        // 기록에 실패하더라도 유형 선택 버튼은 띄워야 한다
+        console.error("미기록 저장 오류:", error);
+    }
+
+    await sendMessage(
+        userId,
+        {
+            content: {
+                type: "text",
+                text:
+                    `⏰ ${formatWorkStartTime(timestamp)}가 넘었습니다.\n` +
+                    "출근 유형을 선택해주세요:\n\n" +
+                    "※ 선택하지 않으면 '미기록'으로 남습니다.",
+                quickReply: {
+                    items: LATE_QUICK_REPLY_ITEMS,
+                },
+            },
+        },
+        channelId
+    );
+}
 
 function checkCooldown(
     userId: string,
@@ -144,6 +276,7 @@ export async function handleTextMessage(
                         "• /test - 연결 테스트\n" +
                         "• /menu - 위치 기반 출근 버튼 등록\n" +
                         "• /delete-menu - 출근 버튼 삭제\n" +
+                        "• /channelid - 이 메시지방의 채널 ID 확인 (관리자용)\n" +
                         "• /help - 도움말 보기\n\n" +
                         "📍 위치 기반 출근:\n" +
                         "• '출근하기' 버튼을 누르면 위치 정보를 요청합니다\n" +
@@ -163,14 +296,76 @@ export async function handleTextMessage(
         return;
     }
 
-    // CHECKIN_LOCATION 메시지 처리 (Persistent Menu에서 온 요청)
-    if (text === "CHECKIN_LOCATION") {
+    // /channelid 명령어 처리 (출근 알림을 보낼 메시지방 ID 확인용)
+    if (text === "/channelid") {
         await sendMessage(
             userId,
             {
                 content: {
                     type: "text",
-                    text: "📍 위치 정보와 함께 출근을 기록하시겠습니까?\n\n⚠️ 주의: 정확한 현재 위치를 선택해주세요.\n임의 위치 선택 시 관리자가 확인할 수 있습니다.",
+                    text: channelId
+                        ? `📡 이 메시지방의 채널 ID입니다:\n\n${channelId}\n\n` +
+                          "이 값을 NAVER_WORKS_REMINDER_CHANNEL_ID 환경 변수에 넣으면\n" +
+                          "출근 시간 5분 전 미체크 인원 알림이 이 방으로 전송됩니다."
+                        : "❌ 1:1 대화에는 채널 ID가 없습니다.\n알림을 보낼 단체 메시지방에서 다시 입력해주세요.",
+                },
+            },
+            channelId
+        );
+        return;
+    }
+
+    // CHECKIN_LOCATION 메시지 처리 (Persistent Menu에서 온 요청 = 출근 절차 시작)
+    if (text === "CHECKIN_LOCATION") {
+        const userInfo = await getUserInfo(userId);
+
+        // 절차를 시작한 사람을 "미기록"으로 먼저 남긴다.
+        // 이 행은 뒤 단계에서 본인 확인용 표식으로도 쓰인다.
+        try {
+            const status = await getTodayAttendanceStatus(
+                { name: userInfo.name, email: userInfo.email },
+                new Date(data.issuedTime)
+            );
+
+            if (status.hasCompletedRecord) {
+                await sendMessage(
+                    userId,
+                    {
+                        content: {
+                            type: "text",
+                            text:
+                                `✅ ${userInfo.name}님은 오늘 이미 '${status.completedAction}'(으)로 기록되어 있습니다.\n` +
+                                `• 기록 시간: ${status.completedTime}\n\n` +
+                                "수정이 필요하면 관리자에게 문의해주세요.",
+                        },
+                    },
+                    channelId
+                );
+                return;
+            }
+
+            await saveToGoogleSheet(
+                {
+                    userId,
+                    domainId,
+                    action: PENDING_ACTION,
+                    timestamp: data.issuedTime,
+                    userInfo,
+                    requestInfo,
+                },
+                { targetRow: status.pendingRow }
+            );
+        } catch (error) {
+            // 기록에 실패해도 출근 절차 자체는 진행시킨다
+            console.error("출근 절차 시작 기록 오류:", error);
+        }
+
+        await sendMessage(
+            userId,
+            {
+                content: {
+                    type: "text",
+                    text: `📍 ${userInfo.name}님, 위치 정보와 함께 출근을 기록하시겠습니까?\n\n⚠️ 주의: 정확한 현재 위치를 선택해주세요.\n임의 위치 선택 시 관리자가 확인할 수 있습니다.`,
                     quickReply: {
                         items: [
                             {
@@ -216,56 +411,21 @@ export async function handleTextMessage(
 
             updateLastCheckinTime(userId);
 
-            // 시간 체크 및 지각 여부 판단
-            const timestamp = new Date(data.issuedTime);
-            const koreanTime = new Date(
-                timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
-            );
-            const hour = koreanTime.getHours();
-            const minute = koreanTime.getMinutes();
-            const isLate = hour > 10 || (hour === 10 && minute > 0);
+            const userInfo = await getUserInfo(userId);
 
-            if (isLate) {
-                // 지각인 경우 추가 옵션 버튼 표시
-                await sendMessage(
-                    userId,
-                    {
-                        content: {
-                            type: "text",
-                            text: "⏰ 오전 10시가 넘었습니다. 출근 유형을 선택해주세요:",
-                            quickReply: {
-                                items: [
-                                    {
-                                        action: {
-                                            type: "message",
-                                            label: "늦출/반차/반반차/외근",
-                                            text: "LATE_OPTIONS",
-                                        },
-                                    },
-                                    {
-                                        action: {
-                                            type: "message",
-                                            label: "지각",
-                                            text: "LATE_ARRIVAL",
-                                        },
-                                    },
-                                    {
-                                        action: {
-                                            type: "message",
-                                            label: "지각 + 늦출",
-                                            text: "LATE_AND_LATE_START",
-                                        },
-                                    },
-                                ],
-                            },
-                        },
-                    },
-                    channelId
-                );
+            // 본인이 '출근하기'로 시작한 절차인지 확인
+            const session = await requireCheckinSession(data, userInfo);
+            if (!session.ok) return;
+
+            // 시간 체크 및 지각 여부 판단 (요일별 기준 시각 적용)
+            if (isLateForWork(new Date(data.issuedTime))) {
+                // 지각인 경우 미기록으로 남기고 추가 옵션 버튼 표시
+                await handleLateCheckin(data, requestInfo, {
+                    userInfo,
+                    targetRow: session.targetRow,
+                });
                 return;
             }
-
-            const userInfo = await getUserInfo(userId);
 
             const attendanceData: AttendanceData = {
                 userId,
@@ -276,7 +436,9 @@ export async function handleTextMessage(
                 requestInfo: requestInfo,
             };
 
-            await saveToGoogleSheet(attendanceData);
+            await saveToGoogleSheet(attendanceData, {
+                targetRow: session.targetRow,
+            });
 
             // 요청 소스 분석
             const sourceAnalysis = requestInfo
@@ -350,12 +512,18 @@ export async function handleTextMessage(
 
     // 지각 관련 버튼 메시지 처리
     if (text === "LATE_OPTIONS") {
+        const userInfo = await getUserInfo(userId);
+
+        // 본인이 '출근하기'로 시작한 절차인지 확인
+        const session = await requireCheckinSession(data, userInfo);
+        if (!session.ok) return;
+
         await sendMessage(
             userId,
             {
                 content: {
                     type: "text",
-                    text: "출근 유형을 선택해주세요:",
+                    text: `${userInfo.name}님, 출근 유형을 선택해주세요:`,
                     quickReply: {
                         items: [
                             {
@@ -399,6 +567,10 @@ export async function handleTextMessage(
         try {
             const userInfo = await getUserInfo(userId);
 
+            // 본인이 '출근하기'로 시작한 절차인지 확인
+            const session = await requireCheckinSession(data, userInfo);
+            if (!session.ok) return;
+
             const attendanceData: AttendanceData = {
                 userId,
                 domainId,
@@ -408,7 +580,11 @@ export async function handleTextMessage(
                 requestInfo: requestInfo,
             };
 
-            await saveToGoogleSheet(attendanceData);
+            // 출근하기를 눌렀을 때 남긴 "미기록" 행을 갱신
+            await saveToGoogleSheet(attendanceData, {
+                targetRow: session.targetRow,
+                replacePendingRow: true,
+            });
 
             await sendMessage(
                 userId,
@@ -446,6 +622,10 @@ export async function handleTextMessage(
         try {
             const userInfo = await getUserInfo(userId);
 
+            // 본인이 '출근하기'로 시작한 절차인지 확인
+            const session = await requireCheckinSession(data, userInfo);
+            if (!session.ok) return;
+
             const attendanceData: AttendanceData = {
                 userId,
                 domainId,
@@ -455,7 +635,11 @@ export async function handleTextMessage(
                 requestInfo: requestInfo,
             };
 
-            await saveToGoogleSheet(attendanceData);
+            // 출근하기를 눌렀을 때 남긴 "미기록" 행을 갱신
+            await saveToGoogleSheet(attendanceData, {
+                targetRow: session.targetRow,
+                replacePendingRow: true,
+            });
 
             await sendMessage(
                 userId,
@@ -499,6 +683,10 @@ export async function handleTextMessage(
         try {
             const userInfo = await getUserInfo(userId);
 
+            // 본인이 '출근하기'로 시작한 절차인지 확인
+            const session = await requireCheckinSession(data, userInfo);
+            if (!session.ok) return;
+
             const actionMap: { [key: string]: string } = {
                 LATE_START: "늦출",
                 HALF_DAY: "반차",
@@ -515,7 +703,11 @@ export async function handleTextMessage(
                 requestInfo: requestInfo,
             };
 
-            await saveToGoogleSheet(attendanceData);
+            // 출근하기를 눌렀을 때 남긴 "미기록" 행을 갱신
+            await saveToGoogleSheet(attendanceData, {
+                targetRow: session.targetRow,
+                replacePendingRow: true,
+            });
 
             await sendMessage(
                 userId,
@@ -705,54 +897,9 @@ export async function handleLocationMessage(
         // 사용자 정보 조회
         const userInfo = await getUserInfo(userId);
 
-        // 시간 체크 및 지각 여부 판단
-        const timestamp = new Date(issuedTime);
-        const koreanTime = new Date(
-            timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
-        );
-        const hour = koreanTime.getHours();
-        const minute = koreanTime.getMinutes();
-        const isLate = hour > 10 || (hour === 10 && minute > 0);
-
-        if (isLate) {
-            // 지각인 경우 추가 옵션 버튼 표시
-            await sendMessage(
-                userId,
-                {
-                    content: {
-                        type: "text",
-                        text: "⏰ 오전 10시가 넘었습니다. 출근 유형을 선택해주세요:",
-                        quickReply: {
-                            items: [
-                                {
-                                    action: {
-                                        type: "message",
-                                        label: "늦출/반차/반반차/외근",
-                                        text: "LATE_OPTIONS",
-                                    },
-                                },
-                                {
-                                    action: {
-                                        type: "message",
-                                        label: "지각",
-                                        text: "LATE_ARRIVAL",
-                                    },
-                                },
-                                {
-                                    action: {
-                                        type: "message",
-                                        label: "지각 + 늦출",
-                                        text: "LATE_AND_LATE_START",
-                                    },
-                                },
-                            ],
-                        },
-                    },
-                },
-                channelId
-            );
-            return;
-        }
+        // 본인이 '출근하기'로 시작한 절차인지 확인
+        const session = await requireCheckinSession(data, userInfo);
+        if (!session.ok) return;
 
         // 위치 검증 로직
         let isVerified = true;
@@ -773,6 +920,25 @@ export async function handleLocationMessage(
             }
         }
 
+        const locationInfo = {
+            address,
+            latitude,
+            longitude,
+            isVerified,
+            verificationNotes,
+        };
+
+        // 시간 체크 및 지각 여부 판단 (요일별 기준 시각 적용)
+        if (isLateForWork(new Date(issuedTime))) {
+            // 지각인 경우 위치 정보를 포함해 미기록으로 남기고 유형 선택 버튼 표시
+            await handleLateCheckin(data, requestInfo, {
+                userInfo,
+                locationInfo,
+                targetRow: session.targetRow,
+            });
+            return;
+        }
+
         // 구글 시트에 위치 기반 출근 기록 저장
         const attendanceData: AttendanceData = {
             userId,
@@ -781,16 +947,12 @@ export async function handleLocationMessage(
             timestamp: issuedTime,
             userInfo,
             requestInfo,
-            locationInfo: {
-                address,
-                latitude,
-                longitude,
-                isVerified,
-                verificationNotes,
-            },
+            locationInfo,
         };
 
-        await saveToGoogleSheet(attendanceData);
+        await saveToGoogleSheet(attendanceData, {
+            targetRow: session.targetRow,
+        });
 
         // 위치 기반 출근 완료 메시지
         let responseText =
@@ -907,52 +1069,10 @@ export async function handlePostbackMessage(
 
             updateLastCheckinTime(userId);
 
-            // 시간 체크 및 지각 여부 판단
-            const timestamp = new Date(issuedTime);
-            const koreanTime = new Date(
-                timestamp.toLocaleString("en-US", { timeZone: "Asia/Seoul" })
-            );
-            const hour = koreanTime.getHours();
-            const minute = koreanTime.getMinutes();
-            const isLate = hour > 10 || (hour === 10 && minute > 0);
-
-            if (isLate) {
-                // 지각인 경우 추가 옵션 버튼 표시
-                await sendMessage(
-                    userId,
-                    {
-                        content: {
-                            type: "text",
-                            text: "⏰ 오전 10시가 넘었습니다. 출근 유형을 선택해주세요:",
-                            quickReply: {
-                                items: [
-                                    {
-                                        action: {
-                                            type: "message",
-                                            label: "늦출/반차/반반차/외근",
-                                            text: "LATE_OPTIONS",
-                                        },
-                                    },
-                                    {
-                                        action: {
-                                            type: "message",
-                                            label: "지각",
-                                            text: "LATE_ARRIVAL",
-                                        },
-                                    },
-                                    {
-                                        action: {
-                                            type: "message",
-                                            label: "지각 + 늦출",
-                                            text: "LATE_AND_LATE_START",
-                                        },
-                                    },
-                                ],
-                            },
-                        },
-                    },
-                    channelId
-                );
+            // 시간 체크 및 지각 여부 판단 (요일별 기준 시각 적용)
+            if (isLateForWork(new Date(issuedTime))) {
+                // 지각인 경우 미기록으로 남기고 추가 옵션 버튼 표시
+                await handleLateCheckin(data, requestInfo);
                 return;
             }
 
