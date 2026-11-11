@@ -1,3 +1,4 @@
+import { parseTcmktCommand, saveTcmktCommand } from "./tcmkt-commands";
 import {
     WebhookData,
     RequestInfo,
@@ -187,6 +188,21 @@ export async function handleTextMessage(
     const { text } = content;
 
     console.log(`텍스트 메시지 처리: ${text}`);
+
+    // 공연 시장조사(tc-mkt) 자동 수집 원격 명령 — 지정 단톡방에서만, 출근 기능과 무관
+    const tcmktCmd = parseTcmktCommand(text, channelId);
+    if (tcmktCmd) {
+        const label = { stop: "멈춤", start: "다시 시작", status: "상태 확인" }[tcmktCmd];
+        try {
+            await saveTcmktCommand(tcmktCmd, userId);
+            await sendMessage(userId, { content: { type: "text",
+                text: `📥 수집 ${label} 명령을 받았습니다. 회사 PC 가 1분 안에 실행하고 결과를 알려 드립니다. (PC 가 꺼져 있으면 켜질 때 실행)` } }, channelId);
+        } catch (e) {
+            console.error("tcmkt 명령 저장 오류:", e);
+            await sendMessage(userId, { content: { type: "text", text: "❌ 수집 명령 저장 중 오류가 났습니다. 잠시 뒤 다시 보내 주세요." } }, channelId);
+        }
+        return;
+    }
 
     // /test 명령어 처리
     if (text === "/test") {
