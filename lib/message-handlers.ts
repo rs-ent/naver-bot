@@ -190,7 +190,7 @@ export async function handleTextMessage(
     console.log(`텍스트 메시지 처리: ${text}`);
 
     // 공연 시장조사(tc-mkt) 자동 수집 원격 명령 — 지정 단톡방에서만, 출근 기능과 무관
-    const tcmktCmd = parseTcmktCommand(text, channelId);
+    const tcmktCmd = parseTcmktCommand(text, channelId, userId);
     if (tcmktCmd) {
         const label = { stop: "멈춤", start: "다시 시작", status: "상태 확인" }[tcmktCmd];
         try {

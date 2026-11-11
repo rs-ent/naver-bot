@@ -6,6 +6,8 @@ import crypto from "crypto";
 import { put, list, del } from "@vercel/blob";
 
 export const TCMKT_CHANNEL = "27d59d70-88c8-b70b-8bb3-26e048130b03";
+// 이 사용자가 봇과 1:1 로 보낸 말도 받음(알림 방이 봇 입장에선 1:1 이라 채널 ID 가 안 옴, 11-11 확인)
+export const TCMKT_OWNERS = ["bb2972f1-5887-4e10-1f19-0377434bf40b"];
 const KEY = "tcmkt/command.json";
 
 const COMMANDS: Record<string, "stop" | "start" | "status"> = {
@@ -17,8 +19,10 @@ const COMMANDS: Record<string, "stop" | "start" | "status"> = {
     "수집 상태": "status",
 };
 
-export function parseTcmktCommand(text: string | undefined, channelId?: string) {
-    if (!text || channelId !== TCMKT_CHANNEL) return null;
+export function parseTcmktCommand(text: string | undefined, channelId?: string, userId?: string) {
+    if (!text) return null;
+    const allowed = channelId ? channelId === TCMKT_CHANNEL : TCMKT_OWNERS.includes(userId ?? "");
+    if (!allowed) return null;
     return COMMANDS[text.trim().replace(/\s+/g, " ")] ?? null;
 }
 
